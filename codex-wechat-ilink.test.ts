@@ -76,10 +76,15 @@ const projects = loadProjectRegistry({
 describe("bridge command parser", () => {
   test("parses slash commands and treats regular text as a user message", () => {
     expect(parseBridgeCommand("/project vibelight")).toEqual({ type: "project", project: "vibelight" });
-    expect(parseBridgeCommand("/mode bypass")).toEqual({ type: "mode", mode: "bypass" });
+    expect(parseBridgeCommand("/mode fullaccess")).toEqual({ type: "mode", mode: "fullaccess" });
+    expect(parseBridgeCommand("/mode bypass")).toEqual({ type: "mode", mode: "fullaccess" });
     expect(parseBridgeCommand("/model bypass")).toEqual({
       type: "error",
-      message: "bypass is a permission mode. Use /mode bypass, not /model bypass.",
+      message: "bypass is a permission mode. Use /mode fullaccess, not /model bypass.",
+    });
+    expect(parseBridgeCommand("/model fullaccess")).toEqual({
+      type: "error",
+      message: "fullaccess is a permission mode. Use /mode fullaccess, not /model fullaccess.",
     });
     expect(parseBridgeCommand("/model gpt-5.2")).toEqual({ type: "model", model: "gpt-5.2" });
     expect(parseBridgeCommand("/model default")).toEqual({ type: "model", model: null });
@@ -97,7 +102,7 @@ describe("bridge command parser", () => {
   test("rejects unknown commands and unsupported modes", () => {
     expect(parseBridgeCommand("/mode god")).toEqual({
       type: "error",
-      message: "Unknown mode: god. Use read, write, or bypass.",
+      message: "Unknown mode: god. Use read, write, or fullaccess.",
     });
     expect(parseBridgeCommand("/deploy")).toEqual({
       type: "error",
@@ -118,15 +123,15 @@ describe("bridge state commands", () => {
   test("stores active project and mode per sender", () => {
     const state = createBridgeState();
     const projectResult = applyBridgeCommand(state, projects, "sender-a", { type: "project", project: "marklab" });
-    const modeResult = applyBridgeCommand(state, projects, "sender-a", { type: "mode", mode: "bypass" });
+    const modeResult = applyBridgeCommand(state, projects, "sender-a", { type: "mode", mode: "fullaccess" });
 
     expect(projectResult.reply).toContain("project: marklab");
     expect(projectResult.reply).toContain("project/session binding");
     expect(projectResult.reply).toContain("switching projects switches to that project's own mobile session and Codex thread");
     expect(projectResult.reply).toContain("does not change the cwd of the current thread");
-    expect(modeResult.reply).toContain("mode: bypass");
+    expect(modeResult.reply).toContain("mode: fullaccess");
     expect(state.senders["sender-a"].activeProject).toBe("marklab");
-    expect(state.senders["sender-a"].activeMode).toBe("bypass");
+    expect(state.senders["sender-a"].activeMode).toBe("fullaccess");
   });
 
   test("project switching resets mode to that project's session or default", () => {
@@ -210,14 +215,14 @@ describe("bridge state commands", () => {
 });
 
 describe("app-server request helpers", () => {
-  test("maps bridge modes to app-server sandbox policies", () => {
-    expect(sandboxForMode("read", "/repo")).toEqual({ type: "readOnly", networkAccess: false });
+  test("maps bridge modes to app-server sandbox policies with network enabled for read and write", () => {
+    expect(sandboxForMode("read", "/repo")).toEqual({ type: "readOnly", networkAccess: true });
     expect(sandboxForMode("write", "/repo")).toEqual({
       type: "workspaceWrite",
-      networkAccess: false,
+      networkAccess: true,
       writableRoots: ["/repo"],
     });
-    expect(sandboxForMode("bypass", "/repo")).toEqual({ type: "dangerFullAccess" });
+    expect(sandboxForMode("fullaccess", "/repo")).toEqual({ type: "dangerFullAccess" });
   });
 
   test("wraps WeChat text with project and sender context", () => {
@@ -627,6 +632,34 @@ describe("stage 1-6 carry-over plan", () => {
       leaseState: "wechat_active",
       parkedThreadId: "wechat-thread",
     });
+  });
+
+  test("carry and pull normalize legacy bypass state to fullaccess", () => {
+    const state = createBridgeState();
+    state.senders["sender-a"] = {
+      activeProject: "vibelight",
+      activeMode: "bypass",
+      sessions: {},
+    };
+
+    const carry = carryCurrentToWeChat(state, projects, {
+      senderId: "sender-a",
+      projectName: "vibelight",
+      threadId: "desktop-thread",
+      now: "2026-05-12T12:00:00.000Z",
+    });
+
+    expect(carry.notification).toContain("mode: fullaccess");
+
+    const pull = pullCurrentToDesktop(state, {
+      threadId: "desktop-thread",
+      projectName: "vibelight",
+      events: [],
+      projects,
+      now: "2026-05-12T12:01:00.000Z",
+    });
+
+    expect(pull.notification).toContain("mode: fullaccess");
   });
 
   test("pull-current moves the lease back to desktop and builds a mobile delta", () => {
@@ -1076,5 +1109,14 @@ describe("cli and skill packaging", () => {
     expect(text).toContain("不是换同一个 thread 的 cwd");
     expect(text).toContain("mode follows the target project session or default");
     expect(text).toContain("/project <name>");
+  });
+
+  test("onboarding explains permission mode semantics", () => {
+    const text = buildOnboardingMessage();
+
+    expect(text).toContain("read: read/search any readable local files, network enabled, no writes");
+    expect(text).toContain("write: read/search any readable local files, network enabled, writes only inside the project cwd");
+    expect(text).toContain("fullaccess: unrestricted local access");
+    expect(text).toContain("/mode fullaccess");
   });
 });

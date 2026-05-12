@@ -83,9 +83,9 @@ There is no public callback URL and no WebSocket server to expose. The local dae
 /onboarding            full carry-over, project, and command guide
 /projects              list configured projects
 /project <name>        switch to that project's own mobile session/thread
-/mode read             read-only Codex mode
-/mode write            workspace-write mode for the project cwd
-/mode bypass           danger-full-access mode
+/mode read             read/search any readable local files, network enabled, no writes
+/mode write            read/search any readable local files, network enabled, write only project cwd
+/mode fullaccess       unrestricted local access
 /model                 show current model
 /model <name>          set model override for this sender + project
 /model default         clear model override
@@ -104,9 +104,17 @@ There is no public callback URL and no WebSocket server to expose. The local dae
 /help                  list commands
 ```
 
-The default `inbox` project starts in `write` mode because it lives inside the bridge-owned workspace. Real code projects should usually start in `read` mode. Use `/mode write` only for projects you want Codex to edit. Use `/mode bypass` only when you intentionally want full local access from WeChat.
+The default `inbox` project starts in `write` mode because it lives inside the bridge-owned workspace. Real code projects should usually start in `read` mode.
 
-Project/session binding is strict: `/project <name>` does not move one existing Codex thread to a different folder. It changes the active project for that WeChat sender, and each project has its own mobile session and Codex thread. Mode follows that target project's existing session or default, so `bypass` from one project does not silently carry into another. Desktop carry-over is the only flow that temporarily attaches the current Desktop thread on top of that per-project mobile session.
+Permission modes:
+
+- `read`: can read/search any readable local files and use network access, but cannot write files.
+- `write`: can read/search any readable local files and use network access, but can write only inside the active project cwd.
+- `fullaccess`: unrestricted local access. Use this only when you intentionally want full local control from WeChat.
+
+`/mode bypass` is kept as a legacy alias for `/mode fullaccess`.
+
+Project/session binding is strict: `/project <name>` does not move one existing Codex thread to a different folder. It changes the active project for that WeChat sender, and each project has its own mobile session and Codex thread. Mode follows that target project's existing session or default, so `fullaccess` from one project does not silently carry into another. Desktop carry-over is the only flow that temporarily attaches the current Desktop thread on top of that per-project mobile session.
 
 If a long-running Codex thread exceeds the model context window, Codex may compact or summarize internally. The bridge continues routing to the same thread id; compaction behavior belongs to Codex itself.
 
@@ -227,8 +235,8 @@ codex-wechat send-image --file /absolute/path/to/preview.png --to last --message
 ## CLI Reference
 
 ```text
-codex-wechat init [--project NAME] [--cwd PATH] [--mode read|write|bypass]
-codex-wechat project add <name> --cwd PATH [--mode read|write|bypass]
+codex-wechat init [--project NAME] [--cwd PATH] [--mode read|write|fullaccess]
+codex-wechat project add <name> --cwd PATH [--mode read|write|fullaccess]
 codex-wechat project list
 codex-wechat setup [--force]
 codex-wechat doctor

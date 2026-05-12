@@ -13,9 +13,9 @@ Never ask the user to paste tokens. Never print `account.json`, bot tokens, send
 
 Ask the user for:
 
-- Project paths to expose.
+- Project paths to use as mobile routing targets and write roots.
 - Whether to keep the default WeChat-only `inbox` project.
-- Default mode for each real code project: usually `read`, optionally `write`, rarely `bypass`.
+- Default mode for each real code project: usually `read`, optionally `write`, rarely `fullaccess`.
 - Whether to install the background daemon.
 - Whether to install the Codex skill.
 
@@ -39,7 +39,7 @@ To continue this Desktop Codex session on your phone, tell Codex: carry this to 
 
 - `codex-wechat init` creates a default WeChat-only `inbox` under `~/.codex-wechat-handoff/workspaces/inbox` in `write` mode. This is safe because it is not a real code repo.
 - Keep real code projects in `read` mode unless the user explicitly chooses write access.
-- Treat `/mode bypass` as dangerous. Explain that it grants local full access before enabling it.
+- Treat `/mode fullaccess` as dangerous. Explain that it grants unrestricted local access before enabling it. `/mode bypass` remains a legacy alias.
 - Keep sender access explicit. Do not configure a public install to respond to every WeChat sender.
 - Do not start a second daemon if `codex-wechat daemon status` shows one already running for the same state directory.
 - Use `codex-wechat doctor` after setup and after daemon install.

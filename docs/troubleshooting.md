@@ -98,9 +98,9 @@ codex-wechat doctor
 codex-wechat daemon logs
 ```
 
-## /mode bypass Safety
+## /mode fullaccess Safety
 
-`/mode bypass` maps remote WeChat requests to full local access. Use it only for trusted senders and trusted projects.
+`/mode fullaccess` maps remote WeChat requests to unrestricted local access. Use it only for trusted senders and trusted projects. `/mode bypass` remains a legacy alias.
 
 Recommended flow:
 
@@ -109,4 +109,4 @@ Recommended flow:
 /project my-project
 ```
 
-Switch to `/mode write` only when you need edits. Switch to `/mode bypass` only when the remote task truly needs unrestricted local commands or network access.
+Switch to `/mode write` only when you need edits inside the active project cwd. Switch to `/mode fullaccess` only when the remote task truly needs unrestricted local commands or unrestricted filesystem access.

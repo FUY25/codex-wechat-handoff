@@ -30,7 +30,7 @@ When non-empty, only those WeChat senders can trigger Codex. Public and shared i
 
 ## Project Allowlist
 
-Only configured projects should be exposed:
+Configured projects are the routing targets and write roots:
 
 ```json
 {
@@ -43,19 +43,21 @@ Only configured projects should be exposed:
 }
 ```
 
-Do not point a project at a broad home directory unless you intend to expose it.
+Do not point a project at a broad home directory unless you intend to make that directory writable in `write` mode. The project allowlist is not a hard read boundary: `read` and `write` modes can read/search any readable local files.
 
 ## Permission Modes
 
-`/mode read` maps to Codex read-only sandboxing.
+`/mode read` can read/search any readable local files and use network access, but cannot write files.
 
-`/mode write` maps to workspace-write sandboxing scoped to the active project cwd.
+`/mode write` can read/search any readable local files and use network access, but can write only inside the active project cwd.
 
-`/mode bypass` maps to full local access. Treat this like letting the WeChat sender operate your local terminal through Codex.
+`/mode fullaccess` maps to unrestricted local access. Treat this like letting the WeChat sender operate your local terminal through Codex.
 
-## Bypass Mode Warning
+`/mode bypass` remains a legacy alias for `/mode fullaccess`.
 
-Use `/mode bypass` only when:
+## Fullaccess Mode Warning
+
+Use `/mode fullaccess` only when:
 
 - The sender is trusted.
 - The project is trusted.

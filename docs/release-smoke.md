@@ -102,7 +102,7 @@ Real WeChat commands exercised:
 /current
 /health
 /mode write
-/mode bypass
+/mode fullaccess
 /mode read
 /model
 /model gpt-5.4

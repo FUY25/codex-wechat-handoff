@@ -159,11 +159,12 @@ type RuntimeOptions = {
   mockReply?: string;
 };
 
-export type BridgeMode = "read" | "write" | "bypass";
+export type BridgeMode = "read" | "write" | "fullaccess";
+export type StoredBridgeMode = BridgeMode | "bypass";
 
 export type ProjectConfig = {
   cwd: string;
-  defaultMode?: BridgeMode;
+  defaultMode?: StoredBridgeMode;
   model?: string;
 };
 
@@ -182,7 +183,7 @@ export type ProjectRegistry = {
 export type SenderProjectSession = {
   threadId?: string;
   cwd: string;
-  mode: BridgeMode;
+  mode: StoredBridgeMode;
 };
 
 export type SenderProjectRoute = RouteRuntimeState & {
@@ -198,7 +199,7 @@ export type SenderProjectRoute = RouteRuntimeState & {
 
 export type SenderState = {
   activeProject?: string;
-  activeMode?: BridgeMode;
+  activeMode?: StoredBridgeMode;
   projectModels?: Record<string, string>;
   routes?: Record<string, SenderProjectRoute>;
   lastSeenAt?: string;
@@ -233,8 +234,8 @@ export type BridgeCommand =
   | { type: "error"; message: string };
 
 type AppServerSandboxPolicy =
-  | { type: "readOnly"; networkAccess: false }
-  | { type: "workspaceWrite"; networkAccess: false; writableRoots: string[] }
+  | { type: "readOnly"; networkAccess: true }
+  | { type: "workspaceWrite"; networkAccess: true; writableRoots: string[] }
   | { type: "dangerFullAccess" };
 
 type AppServerRunResult = {
@@ -1247,7 +1248,7 @@ export function carryCurrentToWeChat(
   const sender = senderState(state, params.senderId);
   sender.activeProject = params.projectName;
   const existingSession = sender.sessions[params.projectName];
-  const mode = params.mode ?? sender.activeMode ?? existingSession?.mode ?? project.defaultMode;
+  const mode = normalizeStoredMode(params.mode ?? sender.activeMode ?? existingSession?.mode, project.defaultMode);
   sender.activeMode = mode;
   const now = params.now ?? new Date().toISOString();
   const route: SenderProjectRoute = {
@@ -1317,7 +1318,8 @@ export function pullCurrentToDesktop(
     since: found.route.attachedAt ?? null,
   });
   const projectsForRoute = state.senders[found.senderId];
-  const mode = projectsForRoute?.activeMode ?? projectsForRoute?.sessions?.[found.projectName]?.mode ?? "read";
+  const projectDefault = params.projects?.projects[found.projectName]?.defaultMode ?? "read";
+  const mode = normalizeStoredMode(projectsForRoute?.activeMode ?? projectsForRoute?.sessions?.[found.projectName]?.mode, projectDefault);
   const model = projectsForRoute?.projectModels?.[found.projectName] ?? params.projects?.projects[found.projectName]?.model ?? "default";
   const notification = [
     "已切回电脑继续。",
@@ -1352,10 +1354,16 @@ export function buildOnboardingMessage(): string {
     "carry-over 会临时接管电脑上的 Desktop thread。",
     "退出 carry-over 后会回到之前的手机 session。",
     "",
+    "权限模式：",
+    "read: read/search any readable local files, network enabled, no writes.",
+    "write: read/search any readable local files, network enabled, writes only inside the project cwd.",
+    "fullaccess: unrestricted local access.",
+    "legacy alias: /mode bypass = /mode fullaccess.",
+    "",
     "其他常用命令：",
     "/projects 查看项目",
     "/project <name> 切项目",
-    "/mode read|write|bypass 改权限",
+    "/mode read|write|fullaccess 改权限",
     "/model 查看或设置模型",
     "/status 查看当前 thread",
     "/new 开一个新的手机侧 project session；Desktop carry-over 中会被拦截。",
@@ -1379,8 +1387,15 @@ export function buildIntroMessage(): string {
 }
 
 function normalizeMode(mode: string): BridgeMode | null {
-  if (mode === "read" || mode === "write" || mode === "bypass") return mode;
+  const normalized = mode.toLowerCase();
+  if (normalized === "read" || normalized === "write" || normalized === "fullaccess") return normalized;
+  if (normalized === "bypass") return "fullaccess";
   return null;
+}
+
+function normalizeStoredMode(mode: StoredBridgeMode | undefined, fallback: BridgeMode): BridgeMode {
+  if (!mode) return fallback;
+  return normalizeMode(mode) ?? fallback;
 }
 
 const SLASH_COMMANDS = [
@@ -1475,7 +1490,7 @@ export function loadProjectRegistry(params: { workspace: string; projectsConfig?
     projects[name] = {
       ...config,
       cwd: path.resolve(expandHome(config.cwd)),
-      defaultMode: config.defaultMode ?? "read",
+      defaultMode: normalizeStoredMode(config.defaultMode, "read"),
     };
   }
 
@@ -1543,7 +1558,7 @@ function activeProjectName(state: BridgeState, projects: ProjectRegistry, sender
 
 function activeMode(state: BridgeState, projects: ProjectRegistry, senderId: string): BridgeMode {
   const sender = senderState(state, senderId);
-  if (sender.activeMode) return sender.activeMode;
+  if (sender.activeMode) return normalizeStoredMode(sender.activeMode, projects.projects[activeProjectName(state, projects, senderId)].defaultMode);
   return projects.projects[activeProjectName(state, projects, senderId)].defaultMode;
 }
 
@@ -1586,14 +1601,15 @@ export function parseBridgeCommand(text: string): BridgeCommand {
   if (command === "/stop") return { type: "stop" };
   if (command === "/mode") {
     const mode = normalizeMode(arg);
-    if (!mode) return { type: "error", message: `Unknown mode: ${arg || "(empty)"}. Use read, write, or bypass.` };
+    if (!mode) return { type: "error", message: `Unknown mode: ${arg || "(empty)"}. Use read, write, or fullaccess.` };
     return { type: "mode", mode };
   }
   if (command === "/model") {
     if (!arg) return { type: "modelStatus" };
     const normalized = arg.toLowerCase();
-    if (normalizeMode(normalized)) {
-      return { type: "error", message: `${normalized} is a permission mode. Use /mode ${normalized}, not /model ${normalized}.` };
+    const permissionMode = normalizeMode(normalized);
+    if (permissionMode) {
+      return { type: "error", message: `${normalized} is a permission mode. Use /mode ${permissionMode}, not /model ${normalized}.` };
     }
     if (normalized === "default" || normalized === "reset" || normalized === "auto") {
       return { type: "model", model: null };
@@ -1634,7 +1650,7 @@ export function applyBridgeCommand(
       return { handled: true, reply: `Unknown project: ${command.project}. Use /projects to list available projects.` };
     }
     sender.activeProject = command.project;
-    sender.activeMode = sender.sessions[command.project]?.mode ?? targetProject.defaultMode;
+    sender.activeMode = normalizeStoredMode(sender.sessions[command.project]?.mode, targetProject.defaultMode);
     const model = activeModel(state, projects, senderId, command.project) ?? "default";
     return {
       handled: true,
@@ -1789,7 +1805,7 @@ export function applyBridgeCommand(
         "/current /sessions /attach latest|<id>",
         "/back /resume /detach",
         "/projects /project <name>",
-        "/mode read|write|bypass",
+        "/mode read|write|fullaccess",
         "/model <name|default>",
         "/status /health /history [n] /new",
       ].join("\n"),
@@ -1835,8 +1851,8 @@ export function applyBridgeCommandToFreshState(
 }
 
 export function sandboxForMode(mode: BridgeMode, cwd: string): AppServerSandboxPolicy {
-  if (mode === "read") return { type: "readOnly", networkAccess: false };
-  if (mode === "write") return { type: "workspaceWrite", networkAccess: false, writableRoots: [cwd] };
+  if (mode === "read") return { type: "readOnly", networkAccess: true };
+  if (mode === "write") return { type: "workspaceWrite", networkAccess: true, writableRoots: [cwd] };
   return { type: "dangerFullAccess" };
 }
 
@@ -3124,7 +3140,7 @@ async function commandInit(options: RuntimeOptions, args: Args): Promise<void> {
     : path.resolve(expandHome(optionString(args, "cwd", process.cwd())));
   const requestedMode = optionString(args, "mode", createsDefaultInbox ? "write" : "read");
   const defaultMode = normalizeMode(requestedMode);
-  if (!defaultMode) throw new Error("Unknown mode. Use read, write, or bypass.");
+  if (!defaultMode) throw new Error("Unknown mode. Use read, write, or fullaccess.");
   const projectsPath = typeof args.projects === "string" ? path.resolve(expandHome(args.projects)) : defaultProjectsFile(options.stateDir);
   mkdirSync(path.dirname(projectsPath), { recursive: true });
   if (createsDefaultInbox) mkdirSync(cwd, { recursive: true });
@@ -3166,11 +3182,11 @@ async function commandProjectConfig(options: RuntimeOptions, args: Args): Promis
 
   if (subcommand === "add") {
     const name = args._[2]?.trim();
-    if (!name) throw new Error("Usage: codex-wechat project add <name> --cwd /absolute/path [--mode read|write|bypass]");
+    if (!name) throw new Error("Usage: codex-wechat project add <name> --cwd /absolute/path [--mode read|write|fullaccess]");
     if (!/^[a-zA-Z0-9_-]+$/.test(name)) throw new Error("Project names may contain only letters, numbers, hyphen, and underscore.");
     const cwd = path.resolve(expandHome(optionString(args, "cwd", process.cwd())));
     const mode = normalizeMode(optionString(args, "mode", "read"));
-    if (!mode) throw new Error("Unknown mode. Use read, write, or bypass.");
+    if (!mode) throw new Error("Unknown mode. Use read, write, or fullaccess.");
     const config = loadProjectsConfig(projectsPath) ?? {
       defaultProject: name,
       allowedSenderIds: [],
@@ -3996,8 +4012,8 @@ function printHelp(): void {
   console.log(`Codex WeChat Handoff
 
 Usage:
-  codex-wechat init [--project NAME] [--cwd PATH] [--mode read|write|bypass]
-  codex-wechat project add <name> --cwd PATH [--mode read|write|bypass]
+  codex-wechat init [--project NAME] [--cwd PATH] [--mode read|write|fullaccess]
+  codex-wechat project add <name> --cwd PATH [--mode read|write|fullaccess]
   codex-wechat project list
   codex-wechat doctor
   codex-wechat qr [--state-dir PATH]
@@ -4036,7 +4052,7 @@ Common options:
 WeChat commands:
   /projects
   /project <name>
-  /mode read|write|bypass
+  /mode read|write|fullaccess
   /model
   /model <model>
   /model default

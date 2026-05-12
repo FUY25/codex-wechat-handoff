@@ -122,6 +122,7 @@ When communicating with the user through WeChat, keep normal status replies shor
 - Do not start a second bridge if `bridge.lock.json` reports a live owner.
 - Do not ask the user to paste tokens.
 - Prefer `--project current` from Desktop unless the user names a project.
-- Keep `mode` separate from carry state; phone-side `/mode read|write|bypass` controls permissions.
+- Keep `mode` separate from carry state; phone-side `/mode read|write|fullaccess` controls permissions. `/mode bypass` is a legacy alias for `/mode fullaccess`.
+- Permission semantics: `read` can read/search any readable local files and use network access but cannot write; `write` can read/search any readable local files and use network access but writes only inside the project cwd; `fullaccess` is unrestricted local access.
 - Default `inbox` can be writable because it is bridge-owned. Real code projects should start read-only unless the user explicitly grants write access.
 - Match the user's language when explaining onboarding. Chinese user messages should get Chinese explanations; English user messages should get English explanations.

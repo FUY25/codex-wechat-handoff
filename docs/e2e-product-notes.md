@@ -62,7 +62,7 @@ Desired flow:
 /status
 ```
 
-This should make it obvious that WeChat can jump between allowed local projects from mobile, while only configured projects are exposed.
+This should make it obvious that WeChat can jump between allowed local projects from mobile. Configured projects are routing targets and write roots; they are not a hard read boundary in `read` or `write` mode.
 
 Status: implemented with `codex-wechat project add <name> --cwd <path> --mode read`.
 
@@ -77,7 +77,7 @@ Desired behavior:
 - Keep regular non-command text routed to Codex as the project agent.
 - Explain that yes, when the bridge is running there is already a Codex agent behind ordinary WeChat messages; strict parsing only applies to slash commands before they are routed to Codex.
 
-Status: implemented for slash suggestions and common handoff intents. `/model bypass` now points users to `/mode bypass`.
+Status: implemented for slash suggestions and common handoff intents. `/model bypass` now points users to `/mode fullaccess`.
 
 ## E2E Finding: Listener State Merge
 

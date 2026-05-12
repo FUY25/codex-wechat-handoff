@@ -114,7 +114,7 @@ The WeChat prompt should include metadata:
 Surface: WeChat remote
 Project: vibelight
 Thread: 019e...
-Mode: read/write/bypass
+Mode: read/write/fullaccess
 ```
 
 ### Flow 3: Desktop Pulls Back Without Phone First
@@ -304,7 +304,7 @@ Existing operational commands should stay:
 ```text
 /projects
 /project <name>
-/mode read|write|bypass
+/mode read|write|fullaccess
 /model <name|default>
 /status
 /new
@@ -636,7 +636,7 @@ Separate concepts:
 project: cwd / repo
 thread: Codex conversation id
 surface lease: desktop or wechat
-mode: read, write, bypass
+mode: read, write, fullaccess
 model: Codex model override
 ```
 
@@ -646,7 +646,7 @@ Recommended defaults:
 
 1. Desktop carry-current inherits sender/project mode unless the Desktop command provides `--mode`.
 2. If no mode exists, default to `read`.
-3. `bypass` should remain explicit and visible in `/current`.
+3. `fullaccess` should remain explicit and visible in `/current`.
 4. On carry-current, the proactive WeChat message should include current mode.
 
 Example:

@@ -70,7 +70,7 @@ These decisions should be made before public release. Defaults below are recomme
 5. **Default permission mode**
    - Recommended: `read`.
    - `/mode write` allowed with explicit user action.
-   - `/mode bypass` allowed only after visible warning in README, onboarding, and `/help`.
+   - `/mode fullaccess` allowed only after visible warning in README, onboarding, and `/help`.
    - Impact: trust model for remote code work.
 
 6. **Daemon support scope for v0.1**
@@ -548,7 +548,7 @@ Do not split it only for aesthetics before the public install path works.
   Ask the user for:
   - project paths to expose
   - default project name
-  - default mode: read, write, or bypass
+  - default mode: read, write, or fullaccess
   - whether to install the background daemon
   - whether to install the Codex skill
 
@@ -673,7 +673,7 @@ Do not split it only for aesthetics before the public install path works.
       "其他常用命令：",
       "/projects 查看项目",
       "/project <name> 切项目",
-      "/mode read|write|bypass 改权限",
+      "/mode read|write|fullaccess 改权限",
       "/model 查看或设置模型",
       "/status 查看当前 thread",
       "/help 查看全部命令",
@@ -797,7 +797,7 @@ Do not split it only for aesthetics before the public install path works.
   context_token missing
   no Chrome installed for HTML rendering
   image/file send failed
-  /mode bypass safety
+  /mode fullaccess safety
   ```
 
 - [ ] **Step 6: Security model doc**
