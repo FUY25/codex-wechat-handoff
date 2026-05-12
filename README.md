@@ -200,6 +200,8 @@ codex-wechat send-file \
 /back                  手机请求切回电脑，等待 Desktop pull-current
 /resume                从手机恢复 remote mode
 /detach                退出 Desktop carry-over，回到之前微信 session
+/onboarding            重新查看 carry-over-first 上手说明
+/intro                 /onboarding 的短别名
 /history [n]           查看最近事件摘要入口
 /help                  查看微信命令
 /new                   当前项目开新 Codex thread

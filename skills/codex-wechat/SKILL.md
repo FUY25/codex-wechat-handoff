@@ -94,6 +94,8 @@ codex-wechat discover-sessions --project current
 
 Then tell them the relevant thread ids. WeChat-side attach is done with `/attach latest`, `/attach <index>`, or `/attach <thread_id>`.
 
+When the user wants the WeChat-side introduction again, tell them to send `/onboarding` or `/intro`; the response starts with carry-over before project and mode commands.
+
 ## Rich WeChat Output
 
 When communicating with the user through WeChat, keep normal status replies short. For visual or dense results such as design choices, UI review, code diff review, architecture diagrams, or comparison tables:

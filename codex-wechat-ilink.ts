@@ -224,6 +224,7 @@ export type BridgeCommand =
   | { type: "resume" }
   | { type: "detach" }
   | { type: "history"; count: number }
+  | { type: "onboarding" }
   | { type: "help" }
   | { type: "stop" }
   | { type: "status" }
@@ -1320,6 +1321,26 @@ export function pullCurrentToDesktop(
   return { senderId: found.senderId, projectName: found.projectName, delta, notification };
 }
 
+export function buildOnboardingMessage(): string {
+  return [
+    "连接成功。",
+    "",
+    "核心用法：把电脑上的 Codex 会话带到微信继续。",
+    "1. 在 Codex Desktop 里说：carry this to WeChat",
+    "2. 或运行：codex-wechat carry-current --project current --to last",
+    "3. 手机微信直接回复，就会继续同一个 Codex thread。",
+    "4. 回电脑后运行：codex-wechat pull-current --project current",
+    "",
+    "其他常用命令：",
+    "/projects 查看项目",
+    "/project <name> 切项目",
+    "/mode read|write|bypass 改权限",
+    "/model 查看或设置模型",
+    "/status 查看当前 thread",
+    "/help 查看全部命令",
+  ].join("\n");
+}
+
 function normalizeMode(mode: string): BridgeMode | null {
   if (mode === "read" || mode === "write" || mode === "bypass") return mode;
   return null;
@@ -1446,6 +1467,7 @@ export function parseBridgeCommand(text: string): BridgeCommand {
     if (!Number.isInteger(count) || count <= 0) return { type: "error", message: "Usage: /history [positive_number]" };
     return { type: "history", count };
   }
+  if (command === "/onboarding" || command === "/intro") return { type: "onboarding" };
   if (command === "/help") return { type: "help" };
   if (command === "/stop") return { type: "stop" };
   if (command === "/mode") {
@@ -1624,10 +1646,15 @@ export function applyBridgeCommand(
     return { handled: true, reply: `history: 最近 ${command.count} 条会在后续事件日志里展开。` };
   }
 
+  if (command.type === "onboarding") {
+    return { handled: true, reply: buildOnboardingMessage() };
+  }
+
   if (command.type === "help") {
     return {
       handled: true,
       reply: [
+        "/onboarding /intro",
         "/current /sessions /attach latest|<id>",
         "/back /resume /detach",
         "/projects /project <name>",
@@ -2874,6 +2901,10 @@ async function commandSetup(options: RuntimeOptions, args: Args): Promise<void> 
       saveAccount(options.stateDir, account);
       console.log("登录成功。");
       console.log(`凭据保存至: ${accountFile(options.stateDir)}`);
+      console.log("");
+      console.log(buildOnboardingMessage());
+      console.log("");
+      console.log("提示：首次收到某个微信 sender 的消息后，bridge 才能缓存回复所需的 context_token。也可以在微信里发送 /onboarding 重新查看这段说明。");
       return;
     }
     if (status.status === "expired") {
@@ -3794,6 +3825,8 @@ WeChat commands:
   /back
   /resume
   /detach
+  /onboarding
+  /intro
   /history [n]
   /help
   /new

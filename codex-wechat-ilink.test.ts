@@ -11,6 +11,7 @@ import {
   buildCarryBackDelta,
   buildFileMessageItem,
   buildLaunchAgentPlist,
+  buildOnboardingMessage,
   chooseHtmlRenderer,
   parseAesKey,
   buildWechatTurnInput,
@@ -79,6 +80,8 @@ describe("bridge command parser", () => {
     expect(parseBridgeCommand("/model")).toEqual({ type: "modelStatus" });
     expect(parseBridgeCommand("/new")).toEqual({ type: "new" });
     expect(parseBridgeCommand("/status")).toEqual({ type: "status" });
+    expect(parseBridgeCommand("/onboarding")).toEqual({ type: "onboarding" });
+    expect(parseBridgeCommand("/intro")).toEqual({ type: "onboarding" });
     expect(parseBridgeCommand("帮我看一下 README")).toEqual({ type: "message", text: "帮我看一下 README" });
   });
 
@@ -890,5 +893,12 @@ describe("cli and skill packaging", () => {
     expect(plist).toContain("/Users/alice/.codex-wechat-handoff");
     expect(plist).toContain("/opt/homebrew/bin/bun");
     expect(plist).not.toContain("fuyuming");
+  });
+
+  test("onboarding starts with carry-over before generic commands", () => {
+    const text = buildOnboardingMessage();
+    expect(text.indexOf("核心用法")).toBeLessThan(text.indexOf("其他常用命令"));
+    expect(text).toContain("codex-wechat carry-current");
+    expect(text).toContain("codex-wechat pull-current");
   });
 });
