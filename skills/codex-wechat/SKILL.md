@@ -45,6 +45,12 @@ Send a local PDF or other file to WeChat for a real smoke test:
 codex-wechat send-file --file /absolute/path/to/report.pdf --to last --message "报告见附件。"
 ```
 
+Render a local HTML artifact to PDF and PNG:
+
+```bash
+codex-wechat render-html --html /absolute/path/to/report.html --pdf /absolute/path/to/report.pdf --png /absolute/path/to/report.png --renderer auto
+```
+
 Short aliases also work: `codex-wechat carry`, `codex-wechat pull`, `codex-wechat status`, and `codex-wechat sessions`.
 
 ## Workflow
@@ -81,7 +87,8 @@ Then tell them the relevant thread ids. WeChat-side attach is done with `/attach
 When communicating with the user through WeChat, keep normal status replies short. For visual or dense results such as design choices, UI review, code diff review, architecture diagrams, or comparison tables:
 
 - Prefer an image when one screen can explain the result. Use image generation or a local rendered image, then reply with `WECHAT_IMAGE: /absolute/path/to/image.png`.
-- Prefer PDF when the result needs multiple pages, tables, layout, or a durable report. Generate HTML first when useful, render it to PDF, then reply with `WECHAT_FILE: /absolute/path/to/report.pdf`.
+- Prefer PDF when the result needs multiple pages, tables, layout, or a durable report. Generate HTML first when useful, run `codex-wechat render-html --renderer auto`, then reply with `WECHAT_FILE: /absolute/path/to/report.pdf`.
+- `render-html --renderer auto` uses Chrome/Chromium/Edge when available. Without a browser on macOS, it falls back to `qlmanage` PNG output and `sips` image-based PDF output.
 - Send a short text summary before the media so the user can understand what arrived in WeChat notifications.
 - If the user only asked for a quick answer, do not generate media just to be fancy.
 

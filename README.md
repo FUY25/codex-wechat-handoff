@@ -140,6 +140,18 @@ WECHAT_FILE: /absolute/path/to/report.pdf
 - 单屏设计方案、UI 对比、状态卡片：优先生成图片并用 `WECHAT_IMAGE` 发回。
 - 多页 diff、review、表格报告：优先 HTML -> PDF，再用 `WECHAT_FILE` 发回。
 
+HTML artifact 可以用内置 renderer 自动转成 PDF/PNG：
+
+```bash
+codex-wechat render-html \
+  --html /absolute/path/to/report.html \
+  --pdf /absolute/path/to/report.pdf \
+  --png /absolute/path/to/report.png \
+  --renderer auto
+```
+
+`--renderer auto` 会优先使用 Chrome / Chromium / Edge 生成高保真 vector PDF 和 PNG；如果没有浏览器，会在 macOS 上降级到 `qlmanage` 生成 PNG，并用 `sips` 把 PNG 包成 image-based PDF。也可以显式指定 `--renderer chrome` 或 `--renderer quicklook`。
+
 也可以直接从 CLI 做真实文件发送 smoke：
 
 ```bash

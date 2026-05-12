@@ -3,7 +3,9 @@ import {
   appendFileSync,
   chmodSync,
   closeSync,
+  copyFileSync,
   existsSync,
+  mkdtempSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -14,6 +16,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 
 const DEFAULT_BASE_URL = "https://ilinkai.weixin.qq.com";
@@ -260,6 +263,12 @@ type ReplyMediaDirective = {
   playtimeMs?: number;
 };
 
+type HtmlRendererSelection =
+  | { kind: "chrome"; executable: string; pdfMode: "vector" }
+  | { kind: "quicklook"; pdfMode: "image" };
+
+type HtmlRendererRequest = "auto" | "chrome" | "quicklook";
+
 type AppServerRequest = {
   id: number;
   method: string;
@@ -369,6 +378,246 @@ function runtimeOptions(args: Args): RuntimeOptions {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isExecutablePath(filePath: string): boolean {
+  try {
+    const stat = statSync(filePath);
+    return stat.isFile();
+  } catch {
+    return false;
+  }
+}
+
+function findCommandOnPath(command: string): string | null {
+  const dirs = (process.env.PATH ?? "").split(path.delimiter).filter(Boolean);
+  for (const dir of dirs) {
+    const candidate = path.join(dir, command);
+    if (isExecutablePath(candidate)) return candidate;
+  }
+  return null;
+}
+
+function findChromeExecutable(): string | null {
+  const envPath = process.env.CODEX_WECHAT_CHROME ? expandHome(process.env.CODEX_WECHAT_CHROME) : "";
+  const candidates = [
+    envPath,
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    findCommandOnPath("google-chrome"),
+    findCommandOnPath("chromium"),
+    findCommandOnPath("chromium-browser"),
+    findCommandOnPath("msedge"),
+  ].filter((candidate): candidate is string => Boolean(candidate));
+  return candidates.find(isExecutablePath) ?? null;
+}
+
+function findMacTool(name: string): string | null {
+  return findCommandOnPath(name) ?? (isExecutablePath(`/usr/bin/${name}`) ? `/usr/bin/${name}` : null);
+}
+
+export function chooseHtmlRenderer(params: {
+  requested: HtmlRendererRequest;
+  needPdf: boolean;
+  needPng: boolean;
+  chromeExecutable: string | null;
+  quickLookAvailable: boolean;
+  sipsAvailable: boolean;
+}): HtmlRendererSelection {
+  const quicklookCanRender = params.quickLookAvailable && (!params.needPdf || params.sipsAvailable);
+  if (params.requested === "chrome") {
+    if (!params.chromeExecutable) throw new Error("Chrome renderer requested, but no Chrome/Chromium/Edge executable was found.");
+    return { kind: "chrome", executable: params.chromeExecutable, pdfMode: "vector" };
+  }
+  if (params.requested === "quicklook") {
+    if (!quicklookCanRender) throw new Error("Quick Look renderer requested, but qlmanage/sips is unavailable for the requested outputs.");
+    return { kind: "quicklook", pdfMode: "image" };
+  }
+  if (params.chromeExecutable) return { kind: "chrome", executable: params.chromeExecutable, pdfMode: "vector" };
+  if (quicklookCanRender) return { kind: "quicklook", pdfMode: "image" };
+  throw new Error("No HTML renderer available. Install Chrome/Chromium/Edge, or use macOS qlmanage + sips fallback.");
+}
+
+function fileHasContent(filePath: string): boolean {
+  try {
+    return statSync(filePath).size > 0;
+  } catch {
+    return false;
+  }
+}
+
+function ensureParentDir(filePath: string): void {
+  mkdirSync(path.dirname(filePath), { recursive: true });
+}
+
+function resolveWorkspacePath(workspace: string, rawPath: string): string {
+  const expanded = expandHome(rawPath);
+  return path.isAbsolute(expanded) ? expanded : path.resolve(workspace, expanded);
+}
+
+function defaultRenderOutputPath(htmlPath: string, ext: ".pdf" | ".png"): string {
+  const parsed = path.parse(htmlPath);
+  const base = [".html", ".htm"].includes(parsed.ext.toLowerCase()) ? path.join(parsed.dir, parsed.name) : htmlPath;
+  return `${base}${ext}`;
+}
+
+function parseViewport(raw: string): { width: number; height: number } {
+  const match = raw.match(/^(\d+)x(\d+)$/i);
+  if (!match) return { width: 1400, height: 1000 };
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width < 320 || height < 320) {
+    return { width: 1400, height: 1000 };
+  }
+  return { width, height };
+}
+
+function spawnSyncChecked(command: string, args: string[]): void {
+  const result = Bun.spawnSync({
+    cmd: [command, ...args],
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (result.exitCode !== 0) {
+    const stderr = result.stderr.toString().trim();
+    const stdout = result.stdout.toString().trim();
+    throw new Error(`${path.basename(command)} failed with exit ${result.exitCode}: ${(stderr || stdout).slice(0, 800)}`);
+  }
+}
+
+async function runCommandUntilOutputs(command: string, args: string[], outputs: string[], timeoutMs: number): Promise<void> {
+  const proc = Bun.spawn([command, ...args], {
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  let exited = false;
+  let exitCode: number | null = null;
+  proc.exited
+    .then((code) => {
+      exited = true;
+      exitCode = code;
+    })
+    .catch(() => {
+      exited = true;
+      exitCode = -1;
+    });
+
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (outputs.every(fileHasContent)) {
+      if (!exited) {
+        proc.kill("SIGTERM");
+        await proc.exited.catch(() => {});
+      }
+      return;
+    }
+    if (exited) break;
+    await sleep(200);
+  }
+
+  if (!exited) {
+    proc.kill("SIGTERM");
+    await proc.exited.catch(() => {});
+  }
+  if (outputs.every(fileHasContent)) return;
+  const missing = outputs.filter((output) => !fileHasContent(output)).join(", ");
+  throw new Error(`${path.basename(command)} did not create expected output before timeout. exit=${exitCode ?? "timeout"} missing=${missing}`);
+}
+
+async function renderHtmlWithChrome(params: {
+  chromeExecutable: string;
+  htmlPath: string;
+  pdfPath: string | null;
+  pngPath: string | null;
+  viewport: { width: number; height: number };
+  timeoutMs: number;
+}): Promise<void> {
+  const htmlUrl = pathToFileURL(params.htmlPath).href;
+  const baseFlags = [
+    "--headless=new",
+    "--disable-gpu",
+    "--no-sandbox",
+    "--disable-background-networking",
+    "--disable-component-update",
+    "--disable-default-apps",
+    "--disable-extensions",
+    "--disable-sync",
+    "--metrics-recording-only",
+    "--mute-audio",
+    "--no-first-run",
+    "--no-default-browser-check",
+  ];
+
+  if (params.pdfPath) {
+    ensureParentDir(params.pdfPath);
+    const userDataDir = mkdtempSync(path.join(os.tmpdir(), "codex-wechat-chrome-pdf-"));
+    try {
+      await runCommandUntilOutputs(
+        params.chromeExecutable,
+        [...baseFlags, `--user-data-dir=${userDataDir}`, `--print-to-pdf=${params.pdfPath}`, htmlUrl],
+        [params.pdfPath],
+        params.timeoutMs,
+      );
+    } finally {
+      rmSync(userDataDir, { recursive: true, force: true });
+    }
+  }
+
+  if (params.pngPath) {
+    ensureParentDir(params.pngPath);
+    const userDataDir = mkdtempSync(path.join(os.tmpdir(), "codex-wechat-chrome-png-"));
+    try {
+      await runCommandUntilOutputs(
+        params.chromeExecutable,
+        [
+          ...baseFlags,
+          `--user-data-dir=${userDataDir}`,
+          `--window-size=${params.viewport.width},${params.viewport.height}`,
+          `--screenshot=${params.pngPath}`,
+          htmlUrl,
+        ],
+        [params.pngPath],
+        params.timeoutMs,
+      );
+    } finally {
+      rmSync(userDataDir, { recursive: true, force: true });
+    }
+  }
+}
+
+function renderHtmlWithQuickLook(params: {
+  qlmanage: string;
+  sips: string | null;
+  htmlPath: string;
+  pdfPath: string | null;
+  pngPath: string | null;
+  viewport: { width: number; height: number };
+}): void {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "codex-wechat-quicklook-"));
+  try {
+    spawnSyncChecked(params.qlmanage, ["-t", "-s", String(params.viewport.width), "-o", tempDir, params.htmlPath]);
+    const expected = path.join(tempDir, `${path.basename(params.htmlPath)}.png`);
+    const generated =
+      fileHasContent(expected)
+        ? expected
+        : readdirSync(tempDir)
+            .map((name) => path.join(tempDir, name))
+            .find((candidate) => candidate.toLowerCase().endsWith(".png") && fileHasContent(candidate));
+    if (!generated) throw new Error("Quick Look did not generate a PNG thumbnail.");
+
+    if (params.pngPath) {
+      ensureParentDir(params.pngPath);
+      copyFileSync(generated, params.pngPath);
+    }
+    if (params.pdfPath) {
+      if (!params.sips) throw new Error("sips is required to wrap Quick Look PNG output as PDF.");
+      ensureParentDir(params.pdfPath);
+      spawnSyncChecked(params.sips, ["-s", "format", "pdf", generated, "--out", params.pdfPath]);
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 }
 
 function accountFile(stateDir: string): string {
@@ -2762,6 +3011,119 @@ async function commandSendFile(options: RuntimeOptions, args: Args): Promise<voi
   console.log(`client_ids: ${clientIds.join(",")}`);
 }
 
+async function commandSendImage(options: RuntimeOptions, args: Args): Promise<void> {
+  const rawFile = optionString(args, "file", args._[1] ?? "");
+  if (!rawFile) throw new Error("send-image 需要 --file PATH。");
+  const imagePath = path.isAbsolute(expandHome(rawFile)) ? expandHome(rawFile) : path.resolve(options.workspace, rawFile);
+  if (!existsSync(imagePath)) throw new Error(`要发送的图片不存在: ${imagePath}`);
+  const toArg = typeof args.to === "string" ? args.to : "last";
+  const message = typeof args.message === "string" ? args.message : "";
+
+  if (options.dryRun) {
+    console.log("dry-run: would send image");
+    console.log(`to: ${toArg}`);
+    console.log(`file: ${imagePath}`);
+    if (message) console.log(`message: ${message}`);
+    return;
+  }
+
+  const state = loadBridgeState(options.stateDir);
+  const senderId = resolveTargetSender(state, options.stateDir, toArg);
+  const resolvedContext = resolveProactiveContextToken(options.stateDir, senderId, { allowEmptyFallback: true });
+  if (resolvedContext.contextToken === null) throw new Error(`No context token available for ${senderId}`);
+  const account = loadAccount(options.stateDir);
+  const clientIds: string[] = [];
+  if (message.trim()) {
+    for (const chunk of chunkTextForWechat(message.trim())) {
+      clientIds.push(await sendTextMessage(account, senderId, chunk, resolvedContext.contextToken));
+    }
+  }
+  clientIds.push(await sendImageMessage(account, options.cdnBaseUrl, senderId, imagePath, resolvedContext.contextToken));
+  appendBridgeEvent(options.stateDir, {
+    type: "reply_sent",
+    data: { senderId, clientIds, context: "image_notice", contextSource: resolvedContext.source, fileName: path.basename(imagePath) },
+  });
+  console.log(`sent: ${imagePath}`);
+  console.log(`client_ids: ${clientIds.join(",")}`);
+}
+
+async function commandRenderHtml(options: RuntimeOptions, args: Args): Promise<void> {
+  const rawHtml = optionString(args, "html", args._[1] ?? "");
+  if (!rawHtml) throw new Error("render-html 需要 --html PATH。");
+  const htmlPath = resolveWorkspacePath(options.workspace, rawHtml);
+  if (!existsSync(htmlPath)) throw new Error(`HTML 文件不存在: ${htmlPath}`);
+
+  const hasExplicitPdf = args.pdf !== undefined;
+  const hasExplicitPng = args.png !== undefined;
+  const noExplicitOutputs = !hasExplicitPdf && !hasExplicitPng;
+  const pdfPath =
+    noExplicitOutputs || args.pdf === true
+      ? defaultRenderOutputPath(htmlPath, ".pdf")
+      : typeof args.pdf === "string"
+        ? resolveWorkspacePath(options.workspace, args.pdf)
+        : null;
+  const pngPath =
+    noExplicitOutputs || args.png === true
+      ? defaultRenderOutputPath(htmlPath, ".png")
+      : typeof args.png === "string"
+        ? resolveWorkspacePath(options.workspace, args.png)
+        : null;
+  if (!pdfPath && !pngPath) throw new Error("render-html 至少需要一个输出：--pdf PATH 或 --png PATH。");
+
+  const requested = optionString(args, "renderer", "auto") as HtmlRendererRequest;
+  if (!["auto", "chrome", "quicklook"].includes(requested)) {
+    throw new Error("--renderer 只能是 auto、chrome 或 quicklook。");
+  }
+  const chromeExecutable = findChromeExecutable();
+  const qlmanage = findMacTool("qlmanage");
+  const sips = findMacTool("sips");
+  const selection = chooseHtmlRenderer({
+    requested,
+    needPdf: Boolean(pdfPath),
+    needPng: Boolean(pngPath),
+    chromeExecutable,
+    quickLookAvailable: Boolean(qlmanage),
+    sipsAvailable: Boolean(sips),
+  });
+  const viewport = parseViewport(optionString(args, "viewport", "1400x1000"));
+  const timeoutMs = optionNumber(args, "render-timeout-ms", 30_000);
+
+  if (options.dryRun) {
+    console.log("dry-run: would render HTML");
+    console.log(`renderer: ${selection.kind}`);
+    console.log(`pdf_mode: ${selection.pdfMode}`);
+    console.log(`html: ${htmlPath}`);
+    if (pdfPath) console.log(`pdf: ${pdfPath}`);
+    if (pngPath) console.log(`png: ${pngPath}`);
+    return;
+  }
+
+  if (selection.kind === "chrome") {
+    await renderHtmlWithChrome({
+      chromeExecutable: selection.executable,
+      htmlPath,
+      pdfPath,
+      pngPath,
+      viewport,
+      timeoutMs,
+    });
+  } else {
+    renderHtmlWithQuickLook({
+      qlmanage: qlmanage!,
+      sips,
+      htmlPath,
+      pdfPath,
+      pngPath,
+      viewport,
+    });
+  }
+
+  console.log(`renderer: ${selection.kind}`);
+  console.log(`pdf_mode: ${selection.pdfMode}`);
+  if (pdfPath) console.log(`pdf: ${pdfPath}`);
+  if (pngPath) console.log(`png: ${pngPath}`);
+}
+
 async function commandStart(options: RuntimeOptions): Promise<void> {
   const account = loadAccount(options.stateDir);
   const projects = loadProjectRegistry({
@@ -3061,7 +3423,9 @@ Usage:
   codex-wechat carry-current [--project current|NAME] [--to last|SENDER] [--thread-id ID]
   codex-wechat pull-current [--project current|NAME] [--thread-id ID]
   codex-wechat carry-status [--project current|NAME]
+  codex-wechat render-html --html PATH [--pdf PATH] [--png PATH] [--renderer auto|chrome|quicklook]
   codex-wechat send-file --file PATH [--to last|SENDER] [--message "..."]
+  codex-wechat send-image --file PATH [--to last|SENDER] [--message "..."]
 
 Aliases:
   codex-wechat sessions
@@ -3080,6 +3444,7 @@ Common options:
   --codex-bin PATH             Default: codex
   --model MODEL                Optional startup-level Codex model default
   --codex-timeout-ms N         Default: 600000
+  --render-timeout-ms N        Default: 30000
 
 WeChat commands:
   /projects
@@ -3128,8 +3493,12 @@ async function main(): Promise<void> {
     await commandCarryCurrent(options, args);
   } else if (command === "pull-current" || command === "pull") {
     await commandPullCurrent(options, args);
+  } else if (command === "render-html") {
+    await commandRenderHtml(options, args);
   } else if (command === "send-file") {
     await commandSendFile(options, args);
+  } else if (command === "send-image") {
+    await commandSendImage(options, args);
   } else if (command === "start") {
     await commandStart(options);
   } else {

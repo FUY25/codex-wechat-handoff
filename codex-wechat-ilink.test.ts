@@ -10,6 +10,7 @@ import {
   buildBridgeHealthReport,
   buildCarryBackDelta,
   buildFileMessageItem,
+  chooseHtmlRenderer,
   parseAesKey,
   buildWechatTurnInput,
   cacheContextToken,
@@ -704,6 +705,109 @@ describe("cli and skill packaging", () => {
       expect(result.exitCode).toBe(0);
       expect(result.stdout.toString()).toContain("dry-run: would send file");
       expect(result.stdout.toString()).toContain(filePath);
+    });
+  });
+
+  test("send-image CLI supports dry-run without account credentials", () => {
+    withTempDir((dir) => {
+      const imagePath = path.join(dir, "preview.png");
+      writeFileSync(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+
+      const result = Bun.spawnSync({
+        cmd: [
+          process.execPath,
+          path.join(import.meta.dir, "codex-wechat-ilink.ts"),
+          "send-image",
+          "--state-dir",
+          dir,
+          "--file",
+          imagePath,
+          "--to",
+          "user@im.wechat",
+          "--dry-run",
+        ],
+        cwd: import.meta.dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.toString()).toContain("dry-run: would send image");
+      expect(result.stdout.toString()).toContain(imagePath);
+    });
+  });
+
+  test("HTML renderer auto mode prefers Chrome when available", () => {
+    expect(
+      chooseHtmlRenderer({
+        requested: "auto",
+        needPdf: true,
+        needPng: true,
+        chromeExecutable: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        quickLookAvailable: true,
+        sipsAvailable: true,
+      }),
+    ).toEqual({ kind: "chrome", executable: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", pdfMode: "vector" });
+  });
+
+  test("HTML renderer auto mode falls back to macOS Quick Look", () => {
+    expect(
+      chooseHtmlRenderer({
+        requested: "auto",
+        needPdf: true,
+        needPng: true,
+        chromeExecutable: null,
+        quickLookAvailable: true,
+        sipsAvailable: true,
+      }),
+    ).toEqual({ kind: "quicklook", pdfMode: "image" });
+  });
+
+  test("HTML renderer refuses PDF fallback when sips is unavailable", () => {
+    expect(() =>
+      chooseHtmlRenderer({
+        requested: "auto",
+        needPdf: true,
+        needPng: false,
+        chromeExecutable: null,
+        quickLookAvailable: true,
+        sipsAvailable: false,
+      }),
+    ).toThrow("No HTML renderer available");
+  });
+
+  test("render-html CLI supports dry-run renderer selection", () => {
+    withTempDir((dir) => {
+      const htmlPath = path.join(dir, "report.html");
+      const pdfPath = path.join(dir, "report.pdf");
+      const pngPath = path.join(dir, "report.png");
+      writeFileSync(htmlPath, "<!doctype html><title>Smoke</title><h1>Smoke</h1>");
+
+      const result = Bun.spawnSync({
+        cmd: [
+          process.execPath,
+          path.join(import.meta.dir, "codex-wechat-ilink.ts"),
+          "render-html",
+          "--html",
+          htmlPath,
+          "--pdf",
+          pdfPath,
+          "--png",
+          pngPath,
+          "--renderer",
+          "quicklook",
+          "--dry-run",
+        ],
+        cwd: import.meta.dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.toString()).toContain("dry-run: would render HTML");
+      expect(result.stdout.toString()).toContain("renderer: quicklook");
+      expect(result.stdout.toString()).toContain(pdfPath);
+      expect(result.stdout.toString()).toContain(pngPath);
     });
   });
 });
