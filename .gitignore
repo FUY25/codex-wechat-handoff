@@ -1,0 +1,5 @@
+.codex-wechat/
+tmp-state/
+inspect-package/
+node_modules/
+*.tgz

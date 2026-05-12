@@ -1,0 +1,19 @@
+{
+  "name": "codex-wechat-ilink-demo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "qr": "bun codex-wechat-ilink.ts qr",
+    "setup": "bun codex-wechat-ilink.ts setup",
+    "start": "bun codex-wechat-ilink.ts start",
+    "ask": "bun codex-wechat-ilink.ts ask"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4"
+  },
+  "engines": {
+    "bun": ">=1.0.0",
+    "node": ">=18.0.0"
+  }
+}
