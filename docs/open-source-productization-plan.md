@@ -449,7 +449,7 @@ Do not split it only for aesthetics before the public install path works.
 
     expect(plist).toContain("com.codex-wechat-handoff.daemon");
     expect(plist).toContain("/Users/alice/.codex-wechat-handoff");
-    expect(plist).not.toContain("fuyuming");
+    expect(plist).not.toContain("local-user");
   });
   ```
 
@@ -586,7 +586,7 @@ Do not split it only for aesthetics before the public install path works.
   mkdir -p "$(dirname "$REPO_DIR")"
 
   if [ ! -d "$REPO_DIR/.git" ]; then
-    git clone https://github.com/OWNER/codex-wechat-handoff "$REPO_DIR"
+    git clone https://github.com/FUY25/codex-wechat-handoff "$REPO_DIR"
   else
     git -C "$REPO_DIR" pull --ff-only
   fi
@@ -600,7 +600,7 @@ Do not split it only for aesthetics before the public install path works.
   echo "Then: codex-wechat setup"
   ```
 
-  Replace `OWNER` before public release.
+  Replace the GitHub owner before public release if the repository moves.
 
 - [ ] **Step 3: README one-prompt installation section**
 
@@ -613,7 +613,7 @@ Do not split it only for aesthetics before the public install path works.
 
   ```text
   Install Codex WeChat Handoff by following:
-  https://raw.githubusercontent.com/OWNER/codex-wechat-handoff/main/INSTALL.md
+  https://raw.githubusercontent.com/FUY25/codex-wechat-handoff/main/INSTALL.md
 
   Start by setting up carry-over from Codex Desktop to WeChat. Then install the daemon, skill, and run doctor. Do not ask me to paste tokens.
   ```
@@ -756,7 +756,7 @@ Do not split it only for aesthetics before the public install path works.
   ## Quick Start
 
   ```bash
-  curl -fsSL https://raw.githubusercontent.com/OWNER/codex-wechat-handoff/main/install.sh | sh
+  curl -fsSL https://raw.githubusercontent.com/FUY25/codex-wechat-handoff/main/install.sh | sh
   codex-wechat init
   codex-wechat setup
   codex-wechat daemon install
@@ -821,10 +821,10 @@ Do not split it only for aesthetics before the public install path works.
 
   ```bash
   bun test codex-wechat-ilink.test.ts
-  rg -n "fuyuming|Demo|OWNER" README.md INSTALL.md install.sh docs
+  rg -n "local-user|SamplePlaceholder|UNSET_REPO" README.md INSTALL.md install.sh docs
   ```
 
-  Before release, `OWNER` must be replaced and product docs should not contain user-local paths except examples marked as examples.
+  Before release, raw GitHub URLs must point at the final repository and product docs should not contain user-local paths except examples marked as examples.
 
 - [ ] **Step 8: Commit**
 
@@ -898,7 +898,7 @@ Do not split it only for aesthetics before the public install path works.
 
   ```bash
   git ls-files | rg 'account.json|context_tokens|sync_buf|sessions.json|events.jsonl|projects.local.json' && exit 1 || true
-  rg -n "fuyuming|/Users/|bot_token|Bearer|account.json" .
+  rg -n "local-user|/Users/|bot_token|Bearer|account.json" .
   bun test codex-wechat-ilink.test.ts
   ```
 
@@ -919,7 +919,7 @@ Do not split it only for aesthetics before the public install path works.
 
 ---
 
-## Stage 8: Public Smoke and Demo
+## Stage 8: Public Smoke And Sample
 
 **Outcome:** Before release, one full clean install and one real WeChat E2E are recorded.
 

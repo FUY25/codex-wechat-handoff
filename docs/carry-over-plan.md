@@ -335,7 +335,7 @@ Proposed shape:
       "sessions": {
         "vibelight": {
           "threadId": "019e-local-wechat-thread",
-          "cwd": "/Users/fuyuming/Desktop/project/vibelight",
+          "cwd": "/absolute/path/to/project",
           "mode": "write"
         }
       },

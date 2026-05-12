@@ -1,164 +1,174 @@
-# Codex WeChat iLink Demo
+# Codex WeChat Handoff
 
-这个项目把文章里的 Claude Code 微信通道改成 Codex 版，并默认使用更原生的 Codex app-server 控制面：
+Continue your Codex Desktop coding session from WeChat, then pull it back.
 
-```text
-微信 iOS -> ClawBot / iLink -> 本地 bun bridge -> codex app-server -> Codex thread/turn -> iLink sendmessage -> 微信
+Codex WeChat Handoff connects personal WeChat iLink to Codex app-server. It is built for remote coding handoff: start at your desk, carry the active Codex thread to your phone, continue from WeChat, then return to the same Desktop context.
+
+## Quick Start
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/FUY25/codex-wechat-handoff/main/install.sh | bash
+codex-wechat init --project my-project --cwd /absolute/path/to/my-project
+codex-wechat setup
+codex-wechat daemon install
+codex-wechat doctor
 ```
 
-这里没有使用 Claude Code 的 development channel。bridge 会长轮询 iLink；每个微信 sender + project 对应一个持久 Codex thread，后续消息在同一个 thread 上继续 `turn/start`。`codex exec` 仍保留为 fallback backend。
+The setup flow saves credentials under `~/.codex-wechat-handoff` by default. Do not paste or publish those files.
 
-## Install with one prompt
+## Install with One Prompt
 
 In Codex Desktop or another local coding agent, say:
 
 ```text
 Install Codex WeChat Handoff by following:
-https://raw.githubusercontent.com/FUY25/codex-wechat-handoff/stage0-reliability-foundation/INSTALL.md
+https://raw.githubusercontent.com/FUY25/codex-wechat-handoff/main/INSTALL.md
 
 Start by setting up carry-over from Codex Desktop to WeChat. Then install the daemon, skill, and run doctor. Do not ask me to paste tokens.
 ```
 
-Or install directly:
+## Carry A Desktop Codex Session To WeChat
+
+From an active Codex Desktop or CLI thread:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/FUY25/codex-wechat-handoff/stage0-reliability-foundation/install.sh | bash
+codex-wechat carry-current --project current --to last
 ```
 
-## 我已验证的部分
+The bridge sends a WeChat message that starts with:
 
-- 本机有 `codex` CLI：`codex-cli 0.130.0`
-- 本机有 `bun`：`1.3.11`
-- `codex app-server --listen stdio://` 支持 JSONL-RPC；已验证 `initialize`、`thread/start`、`turn/start`、`item/agentMessage/delta`、`turn/completed`
-- `codex remote-control` 当前会尝试连接 ChatGPT remote-control enrollment，但本机测试返回 HTTP 404，所以不作为主路径
-- iLink 二维码接口可访问：`GET https://ilinkai.weixin.qq.com/ilink/bot/get_bot_qrcode?bot_type=3` 返回 HTTP 200 和二维码链接
-- 原包 `claude-code-wechat-channel@0.2.0` 的 iLink 字段已对照过：`getupdates`、`sendmessage`、`context_token`、`AuthorizationType: ilink_bot_token`
+```text
+continue from here
+```
 
-## 文件
+After that, replies from WeChat continue the same Codex thread. The active project, mode, and thread id are tracked per WeChat sender.
 
-- `codex-wechat-ilink.ts`：主脚本
-- `codex-wechat-ilink.test.ts`：命令解析、状态管理、sandbox 映射测试
-- `bin/codex-wechat`：面向日常使用的 CLI wrapper
-- `skills/codex-wechat/SKILL.md`：Codex Desktop 可加载的 carry-over skill
-- `AGENTS.md`：Codex 通过微信回复时的风格和媒体发送约定
-- `projects.example.json`：项目路由配置示例
-- `projects.local.json`：本机实际项目配置，已被 `.gitignore` 忽略
-- `package.json`：bun 脚本别名和 `codex-wechat` bin 声明
-- `.gitignore`：忽略本地 token、临时状态和 npm 包检查产物
-
-## 先做无登录检查
+When you return to the computer:
 
 ```bash
-bun codex-wechat-ilink.ts qr --state-dir ./.codex-wechat
+codex-wechat pull-current --project current
 ```
 
-成功时会打印：
+The CLI prints a `Mobile continuation:` delta for the current Desktop chat and tells WeChat that the session moved back to Desktop.
+
+Screenshots are planned for the first public release:
+
+- `docs/assets/carry-over-flow.png`
+- `docs/assets/wechat-command-surface.png`
+
+## How It Works
 
 ```text
-qrcode: ...
-link: https://liteapp.weixin.qq.com/q/...
+WeChat iOS
+  -> iLink long polling
+  -> local codex-wechat daemon
+  -> Codex app-server thread/turn
+  -> iLink sendmessage
+  -> WeChat reply
 ```
 
-## 扫码登录
+There is no public callback URL and no WebSocket server to expose. The local daemon polls iLink, routes messages to Codex, and sends replies back through iLink.
 
-默认凭据会保存到 `~/.codex/channels/wechat/account.json`，权限会尽量设为 `0600`。
-
-如果只想把凭据留在这个 demo 目录，用 `--state-dir ./.codex-wechat`。
-
-```bash
-bun codex-wechat-ilink.ts setup --state-dir ./.codex-wechat
-```
-
-终端会显示二维码，同时生成一张 PNG：
+## WeChat Commands
 
 ```text
-./.codex-wechat/login-qrcode.png
+/onboarding            show carry-over-first intro
+/intro                 alias for /onboarding
+/projects              list configured projects
+/project <name>        switch active project
+/mode read             read-only Codex mode
+/mode write            workspace-write mode for the project cwd
+/mode bypass           danger-full-access mode
+/model                 show current model
+/model <name>          set model override for this sender + project
+/model default         clear model override
+/status                show project, mode, model, thread, lease, cwd
+/health                show daemon and recent bridge health
+/current               show current route and parked thread
+/sessions              show sender project sessions
+/attach latest         attach latest project session to WeChat
+/attach <thread_id>    attach a specific Codex thread
+/back                  request pull-back to Desktop
+/resume                resume phone remote mode
+/detach                exit Desktop carry-over and return to prior WeChat session
+/history [n]           show recent history entry point
+/new                   start a new Codex thread for the current project
+/help                  list commands
 ```
 
-优先用 iOS 微信扫描二维码。如果直接打开 `https://liteapp.weixin.qq.com/q/...` 链接显示“网络错误”，不要点链接，改扫二维码图片。确认后会保存：
+Default permission mode is `read`. Use `/mode write` only for projects you want Codex to edit. Use `/mode bypass` only when you intentionally want full local access from WeChat.
 
-```text
-./.codex-wechat/account.json
-```
+## Project Config
 
-## 项目配置
-
-新用户可以先生成本地配置：
+Create a safe local config:
 
 ```bash
 codex-wechat init --project my-project --cwd /absolute/path/to/my-project
-codex-wechat doctor
 ```
 
-复制示例配置，填入你的项目和 sender 白名单：
+Or start from the example:
 
 ```bash
-cp projects.example.json projects.local.json
+cp projects.example.json ~/.codex-wechat-handoff/projects.json
 ```
 
-默认只暴露明确配置的 sender id。不要在公开安装里把所有微信 sender 都放开；首次绑定后运行 `codex-wechat sender allow <sender_id>`，或使用 setup wizard 写入 allowlist。
+Example:
 
-如果 `allowedSenderIds` 非空，只有列出的微信 sender 可以触发 Codex。公开使用时建议保持非空，项目默认权限保持 `read`，需要写代码时再显式切换 `/mode write`。
+```json
+{
+  "defaultProject": "example",
+  "allowedSenderIds": ["replace-with-your-wechat-sender-id-after-binding"],
+  "projects": {
+    "example": {
+      "cwd": "/absolute/path/to/your/project",
+      "defaultMode": "read"
+    }
+  }
+}
+```
 
-## 启动 Codex 微信桥
+Keep sender access explicit for public or shared installs. If `allowedSenderIds` is non-empty, only those WeChat senders can trigger Codex.
 
-默认 backend 是 `app-server`：
+## Daemon
+
+Install the macOS LaunchAgent:
 
 ```bash
-bun codex-wechat-ilink.ts start \
-  --state-dir ./.codex-wechat \
-  --projects ./projects.local.json \
-  --backend app-server
+codex-wechat daemon install
 ```
 
-收到微信消息后，bridge 会：
+Inspect it:
 
-```text
-1. 解析 /project、/mode、/model、/status 等命令
-2. 找到 sender + project 对应的 threadId
-3. 没有 threadId 就 thread/start
-4. 有 threadId 就在同一个 thread 上 turn/start
-5. 收集 item/agentMessage/delta
-6. sendmessage 回微信
+```bash
+codex-wechat daemon status
+codex-wechat daemon logs
 ```
 
-## 图片、语音和文件
+Stop or remove it:
 
-bridge 现在会尝试处理 iLink 媒体消息：
-
-```text
-收图/语音：getupdates -> CDN 下载 -> AES-128-ECB 解密 -> 保存到 state-dir/media -> 把本地路径传给 Codex
-发图/语音/文件：Codex 回复媒体标记 -> getuploadurl -> AES-128-ECB 加密上传 CDN -> sendmessage
+```bash
+codex-wechat daemon stop
+codex-wechat daemon uninstall
 ```
 
-入站图片、语音、文件、视频会保存到：
+The legacy scripts remain thin wrappers:
 
-```text
-<state-dir>/media/<sender-id-base64url>/
+```bash
+scripts/install-launch-agent.sh
+scripts/uninstall-launch-agent.sh
 ```
 
-出站回复支持这些标记：
+## Rich Artifacts
+
+Codex can send files and images back through WeChat. Replies can include these markers:
 
 ```text
 WECHAT_IMAGE: /absolute/path/to/image.png
-WECHAT_VOICE: /absolute/path/to/audio.silk playtime_ms=2000
 WECHAT_FILE: /absolute/path/to/report.pdf
+WECHAT_VOICE: /absolute/path/to/audio.silk playtime_ms=2000
 ```
 
-也会自动识别本地 Markdown 图片路径，例如：
-
-```text
-![preview](/absolute/path/to/image.png)
-```
-
-语音发送目前只负责上传并按扩展名设置 encode_type，不做本地音频转码；最稳的是传 `.silk` 文件。
-
-视觉类输出建议：
-
-- 单屏设计方案、UI 对比、状态卡片：优先生成图片并用 `WECHAT_IMAGE` 发回。
-- 多页 diff、review、表格报告：优先 HTML -> PDF，再用 `WECHAT_FILE` 发回。
-
-HTML artifact 可以用内置 renderer 自动转成 PDF/PNG：
+For visual design choices, code diffs, diagrams, or reports, generate HTML first, then render:
 
 ```bash
 codex-wechat render-html \
@@ -168,221 +178,68 @@ codex-wechat render-html \
   --renderer auto
 ```
 
-`--renderer auto` 会优先使用 Chrome / Chromium / Edge 生成高保真 vector PDF 和 PNG；如果没有浏览器，会在 macOS 上降级到 `qlmanage` 生成 PNG，并用 `sips` 把 PNG 包成 image-based PDF。也可以显式指定 `--renderer chrome` 或 `--renderer quicklook`。
+`--renderer auto` uses Chrome, Chromium, or Edge when available. On macOS without a browser, it falls back to Quick Look PNG output and `sips` image-based PDF output.
 
-也可以直接从 CLI 做真实文件发送 smoke：
+Send files directly:
 
 ```bash
-codex-wechat send-file \
-  --state-dir ./.codex-wechat \
-  --file /absolute/path/to/report.pdf \
-  --to last \
-  --message "报告见附件。"
+codex-wechat send-file --file /absolute/path/to/report.pdf --to last --message "Report attached."
+codex-wechat send-image --file /absolute/path/to/preview.png --to last --message "Preview attached."
 ```
 
-## 微信命令
+## CLI Reference
 
 ```text
-/projects              列出项目
-/project vibelight     切换当前 sender 的活动项目
-/mode read             只读模式
-/mode write            workspace-write 模式
-/mode bypass           danger-full-access 模式
-/model                 查看当前模型
-/model gpt-5.2         当前项目后续消息使用指定模型
-/model default         清掉当前项目模型 override，回到项目或 Codex 默认模型
-/status                查看当前 sender 的项目、模式、thread
-/health                查看 daemon、iLink、app-server、context token、lock 和最近错误
-/current               查看当前项目、thread、lease 和 parked thread
-/sessions              查看当前 sender 的项目 session 和 attached thread
-/attach latest         把当前项目最新 session attach 到微信
-/attach <thread_id>    手动 attach 一个 Codex thread
-/back                  手机请求切回电脑，等待 Desktop pull-current
-/resume                从手机恢复 remote mode
-/detach                退出 Desktop carry-over，回到之前微信 session
-/onboarding            重新查看 carry-over-first 上手说明
-/intro                 /onboarding 的短别名
-/history [n]           查看最近事件摘要入口
-/help                  查看微信命令
-/new                   当前项目开新 Codex thread
+codex-wechat init [--project NAME] [--cwd PATH]
+codex-wechat setup [--force]
+codex-wechat doctor
+codex-wechat daemon install|status|logs|stop|uninstall
+codex-wechat carry-current [--project current|NAME] [--to last|SENDER] [--thread-id ID]
+codex-wechat pull-current [--project current|NAME] [--thread-id ID]
+codex-wechat carry-status [--project current|NAME]
+codex-wechat discover-sessions [--project current|NAME]
+codex-wechat start [--workspace PATH] [--projects PATH]
+codex-wechat render-html --html PATH [--pdf PATH] [--png PATH] [--renderer auto|chrome|quicklook]
+codex-wechat send-file --file PATH [--to last|SENDER] [--message "..."]
+codex-wechat send-image --file PATH [--to last|SENDER] [--message "..."]
 ```
 
-普通消息会发给当前项目的 Codex thread。`/model` 的 override 按“微信 sender + project”保存：你可以在 `vibelight` 用一个模型，在 `marklab` 用另一个模型。
-
-如果当前 route 是 Desktop active 或 pending Desktop pull，普通微信消息不会静默写入同一个 thread；bridge 会提示发 `/resume` 后再继续手机 remote mode。
-
-## 运行状态文件
-
-bridge 会在 `--state-dir` 下保存运行状态，用来支持远程排障和后续 carry-over：
+Common options:
 
 ```text
-account.json           iLink 登录凭据
-sync_buf.txt           iLink 长轮询游标
-sessions.json          sender/project/thread 状态
-context_tokens.json    每个 sender 最新可用 context_token
-bridge.lock.json       当前 daemon owner 和 heartbeat，避免重复实例
-events.jsonl           结构化事件日志，后续 /wechat pull 会用它生成手机侧 delta
-message_claims/        已处理微信消息 claim，避免重复执行同一条消息
+--state-dir PATH             default: ~/.codex-wechat-handoff
+--projects PATH              project route config JSON
+--backend app-server|exec    default: app-server
+--codex-bin PATH             default: codex
+--model MODEL                optional startup-level Codex model default
+--codex-timeout-ms N         default: 600000
+--dry-run                    generate replies without sending to WeChat
 ```
 
-如果微信发了消息但没有回复，优先在微信发 `/health`，它会区分最近一次失败更像是登录、轮询、context token、app-server、active turn 还是项目配置问题。
+## Troubleshooting
 
-## 本地测试 Codex 调用
-
-不碰微信，直接测试 app-server backend：
+Start with:
 
 ```bash
-bun codex-wechat-ilink.ts ask --backend app-server --message "只回复 ok"
-```
-
-只测脚本，不真的调用 Codex：
-
-```bash
-bun codex-wechat-ilink.ts ask --message "hello" --mock-reply "mock: {message}"
-```
-
-fallback `exec` backend：
-
-```bash
-bun codex-wechat-ilink.ts ask --backend exec --message "只回复 pong"
-```
-
-## Desktop / WeChat carry-over
-
-这个版本支持把当前 Codex Desktop/CLI thread 绑定到微信 route，再从微信继续，之后从 Desktop 拉回 delta。
-
-日常入口是 `codex-wechat` CLI；开发调试时也可以继续用 `bun codex-wechat-ilink.ts ...`。
-
-从 Codex Desktop 当前会话发起 handoff：
-
-```bash
-codex-wechat carry-current \
-  --project current \
-  --to last
-```
-
-`carry-current` 默认读取当前进程环境里的 `CODEX_THREAD_ID`。如果是在普通终端测试，可以显式传：
-
-```bash
-codex-wechat carry-current \
-  --project vibelight \
-  --to last \
-  --thread-id 019e...
-```
-
-回到电脑后拉回手机期间的继续内容：
-
-```bash
-codex-wechat pull-current --project current
-```
-
-辅助命令：
-
-```bash
-codex-wechat carry-status --project current
-codex-wechat discover-sessions --project vibelight
-```
-
-短别名也可用：
-
-```bash
-codex-wechat carry --project current --to last
-codex-wechat pull --project current
-codex-wechat status --project current
-codex-wechat sessions --project current
-```
-
-`carry-current` 和 `pull-current` 会优先用 `context_tokens.json` 里的最新 token 主动给微信发通知；如果还没有缓存 token，会尝试 iLink 空 context fallback。若服务端拒绝，状态仍会保存，终端会显示 `notification: not_sent (...)`；从微信先发任意一条消息即可建立 context。
-
-## Codex skill
-
-本仓库提供一个本地 skill，让 Codex Desktop 能把“carry this to WeChat”“/wechat pull”“status”等自然语言请求映射到 CLI：
-
-```bash
-ln -s /Users/fuyuming/Desktop/wechat-to-codex/skills/codex-wechat ~/.codex/skills/codex-wechat
-```
-
-当前本机已安装这个 symlink。安装后，新开的 Codex 会话可以直接使用 `codex-wechat` skill；真正执行仍走同一个 CLI。
-
-## 常用参数
-
-```text
---state-dir PATH             默认 ~/.codex-wechat-handoff
---cdn-base-url URL           默认 https://novac2c.cdn.weixin.qq.com/c2c
---workspace PATH             Codex 工作目录，默认当前目录
---projects PATH              项目路由 JSON
---backend app-server|exec    默认 app-server
---codex-bin PATH             Codex CLI 路径，默认 codex
---model MODEL                可选，启动级 Codex 模型默认值
---codex-timeout-ms N         默认 600000
---dry-run                    start 时生成回复但不调用 sendmessage
-```
-
-## 后台常驻
-
-安装用户级 LaunchAgent，让 bridge 在当前 macOS 用户登录时常驻，并在退出后自动拉起：
-
-```bash
-codex-wechat daemon install
-```
-
-查看状态和最近日志：
-
-```bash
+codex-wechat doctor
 codex-wechat daemon status
 codex-wechat daemon logs
 ```
 
-LaunchAgent 默认把 Codex 单轮处理超时设为 10 分钟。超时或异常时，bridge 会尽量把失败原因发回微信，而不是静默卡住。需要指定本地项目配置时，把同样的参数交给安装命令：
+See [docs/troubleshooting.md](docs/troubleshooting.md).
+
+## Security
+
+Codex WeChat Handoff uses official iLink long polling, not a reversed WeChat protocol. The sensitive parts are local credentials, sender allowlists, project allowlists, and permission mode choices.
+
+See [docs/security-model.md](docs/security-model.md).
+
+## Development
 
 ```bash
-codex-wechat daemon install --projects ./projects.local.json
+bun install
+bun test codex-wechat-ilink.test.ts
+git diff --check
 ```
 
-停止但保留 plist，或停止并移除：
-
-```bash
-codex-wechat daemon stop
-codex-wechat daemon uninstall
-```
-
-旧脚本仍可用，但现在只是这些 CLI 命令的 wrapper：
-
-```bash
-scripts/install-launch-agent.sh
-scripts/uninstall-launch-agent.sh
-```
-
-## 远程代码工作
-
-默认 `/mode read`，适合问问题、读代码、让 Codex 做分析，但不会允许它改文件。要允许当前项目写入：
-
-```text
-/mode write
-```
-
-最高权限：
-
-```text
-/mode bypass
-```
-
-`bypass` 映射到 app-server 的 `dangerFullAccess` sandbox policy。只建议在 `allowedSenderIds` 白名单打开时临时使用。
-
-## 和 Claude Code 版的差别
-
-Claude Code 版依赖它自己的 Channel 扩展：
-
-```bash
-claude --dangerously-load-development-channels server:wechat
-```
-
-这个 Codex 版不需要 Claude Channel。它通过 Codex app-server 创建和推进 Codex threads。它不会注入你当前 Codex Desktop 窗口里的这条对话，但它使用的是 Codex 原生 thread/turn 控制面，而不是手写 history 拼 prompt。
-
-## 注意
-
-- 仍然需要 iOS 微信和 ClawBot / iLink 可用。
-- `context_token` 是发送回复必需字段，脚本只会回复带 `context_token` 的用户消息。
-- token 文件不要提交或发给别人。
-- 默认 `read` 是有意的。确认稳定后，再按需要用 `/mode write` 或临时 `/mode bypass`。
-- 可以用 `/model <model>` 从微信里切当前项目后续消息的 Codex 模型；用 `/model default` 回到默认。
+The main implementation currently lives in `codex-wechat-ilink.ts` so the install path stays simple. It can be split into modules after the public workflow is stable.
