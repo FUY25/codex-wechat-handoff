@@ -594,37 +594,6 @@ export function buildInboundUserMessageText(params: { messageText: string; media
   return lines.join("\n");
 }
 
-export function parseReplyMediaDirectives(reply: string): { text: string; media: ReplyMediaDirective[] } {
-  const media: ReplyMediaDirective[] = [];
-  const textLines: string[] = [];
-
-  for (const line of reply.split(/\r?\n/)) {
-    const imageMatch = line.match(/^\s*WECHAT_IMAGE:\s+(.+?)\s*$/i);
-    if (imageMatch) {
-      media.push({ kind: "image", path: imageMatch[1].trim() });
-      continue;
-    }
-
-    const voiceMatch = line.match(/^\s*WECHAT_VOICE:\s+(\S+)(?:\s+playtime_ms=(\d+))?\s*$/i);
-    if (voiceMatch) {
-      media.push({
-        kind: "voice",
-        path: voiceMatch[1],
-        ...(voiceMatch[2] ? { playtimeMs: Number(voiceMatch[2]) } : {}),
-      });
-      continue;
-    }
-
-    const withoutMarkdownImages = line.replace(/!\[[^\]]*]\((\/[^)\s]+)\)/g, (_match, imagePath: string) => {
-      media.push({ kind: "image", path: imagePath });
-      return "";
-    });
-    if (withoutMarkdownImages.trim()) textLines.push(withoutMarkdownImages.trimEnd());
-  }
-
-  return { text: textLines.join("\n").trim(), media };
-}
-
 export function formatBridgeError(error: unknown, timeoutMs: number): string {
   const message = error instanceof Error ? error.message : String(error);
   if (message.includes("timed out")) {
@@ -704,6 +673,11 @@ class CodexAppServerClient {
         "You are Codex connected to WeChat through a local bridge.",
         `Active project: ${params.projectName}`,
         "Send concise plain-text final answers suitable for WeChat.",
+        "WeChat replies should feel natural and human, not stiff or robotic.",
+        "Incoming WeChat images and voice files may appear as local paths in the user message; inspect image paths when visual details matter.",
+        "When appropriate, use the imagegen skill to generate images for the user.",
+        "To send an image through WeChat, put a line exactly like: WECHAT_IMAGE: /absolute/path/to/image.png",
+        "To send a voice message through WeChat, put a line exactly like: WECHAT_VOICE: /absolute/path/to/audio.silk playtime_ms=2000",
       ].join("\n"),
     });
     const threadId = response?.thread?.id;
@@ -723,6 +697,11 @@ class CodexAppServerClient {
         "You are Codex connected to WeChat through a local bridge.",
         `Active project: ${params.projectName}`,
         "Send concise plain-text final answers suitable for WeChat.",
+        "WeChat replies should feel natural and human, not stiff or robotic.",
+        "Incoming WeChat images and voice files may appear as local paths in the user message; inspect image paths when visual details matter.",
+        "When appropriate, use the imagegen skill to generate images for the user.",
+        "To send an image through WeChat, put a line exactly like: WECHAT_IMAGE: /absolute/path/to/image.png",
+        "To send a voice message through WeChat, put a line exactly like: WECHAT_VOICE: /absolute/path/to/audio.silk playtime_ms=2000",
       ].join("\n"),
     });
     const threadId = response?.thread?.id ?? params.threadId;
@@ -1422,29 +1401,80 @@ async function sendTextMessage(account: Account, toUserId: string, text: string,
   return clientId;
 }
 
-async function sendImageMessage(params: {
-  account: Account;
-  cdnBaseUrl: string;
-  toUserId: string;
-  imagePath: string;
-  contextToken: string;
-}): Promise<string> {
+function parseReplyMediaPayload(raw: string): { path: string; playtimeMs?: number } | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const playtimeMatch = trimmed.match(/\bplaytime_ms=(\d+)\b/i);
+  const playtimeMs = playtimeMatch ? Number(playtimeMatch[1]) : undefined;
+  const withoutOptions = trimmed.replace(/\s*\bplaytime_ms=\d+\b/i, "").trim();
+  const unquoted = withoutOptions.replace(/^["']|["']$/g, "");
+  if (!path.isAbsolute(unquoted)) return null;
+  return { path: unquoted, playtimeMs };
+}
+
+function isLocalImagePath(candidate: string): boolean {
+  if (!path.isAbsolute(candidate)) return false;
+  return /\.(png|jpe?g|gif|webp|heic|heif|bmp)$/i.test(candidate);
+}
+
+export function parseReplyMediaDirectives(reply: string): { text: string; media: ReplyMediaDirective[] } {
+  const media: ReplyMediaDirective[] = [];
+  const lines: string[] = [];
+  for (const line of reply.split(/\r?\n/)) {
+    const imageMatch = line.match(/^\s*(?:WECHAT_IMAGE|微信图片|IMAGE)\s*:\s*(.+)$/i);
+    if (imageMatch) {
+      const parsed = parseReplyMediaPayload(imageMatch[1]);
+      if (parsed) media.push({ kind: "image", path: parsed.path });
+      continue;
+    }
+
+    const voiceMatch = line.match(/^\s*(?:WECHAT_VOICE|微信语音|VOICE)\s*:\s*(.+)$/i);
+    if (voiceMatch) {
+      const parsed = parseReplyMediaPayload(voiceMatch[1]);
+      if (parsed) media.push({ kind: "voice", path: parsed.path, playtimeMs: parsed.playtimeMs });
+      continue;
+    }
+
+    const rewritten = line.replace(/!\[[^\]]*]\(([^)]+)\)/g, (_match, target: string) => {
+      const parsedTarget = target.trim().replace(/^["']|["']$/g, "");
+      if (isLocalImagePath(parsedTarget)) {
+        media.push({ kind: "image", path: parsedTarget });
+        return "";
+      }
+      return _match;
+    });
+    lines.push(rewritten.trimEnd());
+  }
+  return { text: lines.join("\n").trim(), media };
+}
+
+function voiceEncodeTypeForPath(filePath: string): number {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === ".silk" || ext === ".slk") return VOICE_ENCODE_SILK;
+  if (ext === ".mp3") return VOICE_ENCODE_MP3;
+  if (ext === ".amr") return VOICE_ENCODE_AMR;
+  if (ext === ".ogg" || ext === ".spx") return VOICE_ENCODE_OGG_SPEEX;
+  if (ext === ".pcm" || ext === ".wav") return VOICE_ENCODE_PCM;
+  return VOICE_ENCODE_SILK;
+}
+
+async function sendImageMessage(account: Account, cdnBaseUrl: string, toUserId: string, imagePath: string, contextToken: string): Promise<string> {
   const uploaded = await uploadMediaFile({
-    account: params.account,
-    cdnBaseUrl: params.cdnBaseUrl,
-    toUserId: params.toUserId,
-    filePath: params.imagePath,
+    account,
+    cdnBaseUrl,
+    toUserId,
+    filePath: imagePath,
     mediaType: UPLOAD_MEDIA_IMAGE,
   });
   const clientId = `codex-wechat:${Date.now()}-${randomBytes(4).toString("hex")}`;
   await apiPost(
-    params.account.baseUrl,
+    account.baseUrl,
     "ilink/bot/sendmessage",
-    params.account.token,
+    account.token,
     {
       msg: {
         from_user_id: "",
-        to_user_id: params.toUserId,
+        to_user_id: toUserId,
         client_id: clientId,
         message_type: MSG_TYPE_BOT,
         message_state: MSG_STATE_FINISH,
@@ -1458,10 +1488,61 @@ async function sendImageMessage(params: {
                 encrypt_type: 1,
               },
               mid_size: uploaded.fileSizeCiphertext,
+              hd_size: uploaded.fileSizeCiphertext,
             },
           },
         ],
-        context_token: params.contextToken,
+        context_token: contextToken,
+      },
+      base_info: { channel_version: CHANNEL_VERSION },
+    },
+    15_000,
+  );
+  return clientId;
+}
+
+async function sendVoiceMessage(
+  account: Account,
+  cdnBaseUrl: string,
+  toUserId: string,
+  voicePath: string,
+  contextToken: string,
+  playtimeMs?: number,
+): Promise<string> {
+  const uploaded = await uploadMediaFile({
+    account,
+    cdnBaseUrl,
+    toUserId,
+    filePath: voicePath,
+    mediaType: UPLOAD_MEDIA_VOICE,
+  });
+  const clientId = `codex-wechat:${Date.now()}-${randomBytes(4).toString("hex")}`;
+  await apiPost(
+    account.baseUrl,
+    "ilink/bot/sendmessage",
+    account.token,
+    {
+      msg: {
+        from_user_id: "",
+        to_user_id: toUserId,
+        client_id: clientId,
+        message_type: MSG_TYPE_BOT,
+        message_state: MSG_STATE_FINISH,
+        item_list: [
+          {
+            type: MSG_ITEM_VOICE,
+            voice_item: {
+              media: {
+                encrypt_query_param: uploaded.downloadEncryptedQueryParam,
+                aes_key: mediaAesKeyBase64(uploaded.aeskey),
+                encrypt_type: 1,
+              },
+              encode_type: voiceEncodeTypeForPath(voicePath),
+              playtime: playtimeMs ?? 0,
+            },
+          },
+        ],
+        context_token: contextToken,
       },
       base_info: { channel_version: CHANNEL_VERSION },
     },
@@ -1478,36 +1559,29 @@ async function sendReplyMessage(params: {
   contextToken: string;
 }): Promise<string[]> {
   const parsed = parseReplyMediaDirectives(params.reply);
-  const messageIds: string[] = [];
-  if (parsed.text || !parsed.media.length) {
-    messageIds.push(await sendTextMessage(params.account, params.toUserId, parsed.text || params.reply, params.contextToken));
+  const clientIds: string[] = [];
+  if (parsed.text) {
+    clientIds.push(await sendTextMessage(params.account, params.toUserId, parsed.text, params.contextToken));
   }
-
   for (const media of parsed.media) {
-    if (media.kind === "image") {
-      messageIds.push(
-        await sendImageMessage({
-          account: params.account,
-          cdnBaseUrl: params.options.cdnBaseUrl,
-          toUserId: params.toUserId,
-          imagePath: media.path,
-          contextToken: params.contextToken,
-        }),
-      );
+    if (!existsSync(media.path)) {
+      const warning = `要发送的媒体文件不存在: ${media.path}`;
+      console.error(warning);
+      clientIds.push(await sendTextMessage(params.account, params.toUserId, warning, params.contextToken));
       continue;
     }
-
-    messageIds.push(
-      await sendTextMessage(
-        params.account,
-        params.toUserId,
-        `语音文件已生成，但当前 bridge 还没有实现语音发送：${media.path}`,
-        params.contextToken,
-      ),
-    );
+    if (media.kind === "image") {
+      clientIds.push(await sendImageMessage(params.account, params.options.cdnBaseUrl, params.toUserId, media.path, params.contextToken));
+    } else {
+      clientIds.push(
+        await sendVoiceMessage(params.account, params.options.cdnBaseUrl, params.toUserId, media.path, params.contextToken, media.playtimeMs),
+      );
+    }
   }
-
-  return messageIds;
+  if (!clientIds.length) {
+    clientIds.push(await sendTextMessage(params.account, params.toUserId, params.reply, params.contextToken));
+  }
+  return clientIds;
 }
 
 async function commandQR(options: RuntimeOptions): Promise<void> {
@@ -1767,6 +1841,7 @@ Usage:
 Common options:
   --state-dir PATH             Default: ~/.codex/channels/wechat
   --base-url URL               Default: ${DEFAULT_BASE_URL}
+  --cdn-base-url URL           Default: ${DEFAULT_CDN_BASE_URL}
   --workspace PATH             Codex working directory, default: current directory
   --projects PATH              Projects config JSON for /project routing
   --backend app-server|exec    Default: app-server
@@ -1784,6 +1859,10 @@ WeChat commands:
   /model default
   /status
   /new
+
+Media reply markers:
+  WECHAT_IMAGE: /absolute/path/to/image.png
+  WECHAT_VOICE: /absolute/path/to/audio.silk playtime_ms=2000
 `);
 }
 

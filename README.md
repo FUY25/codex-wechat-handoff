@@ -21,6 +21,7 @@
 
 - `codex-wechat-ilink.ts`：主脚本
 - `codex-wechat-ilink.test.ts`：命令解析、状态管理、sandbox 映射测试
+- `AGENTS.md`：Codex 通过微信回复时的风格和媒体发送约定
 - `projects.example.json`：项目路由配置示例
 - `projects.local.json`：本机实际项目配置，已被 `.gitignore` 忽略
 - `package.json`：bun 脚本别名
@@ -101,6 +102,36 @@ bun codex-wechat-ilink.ts start \
 6. sendmessage 回微信
 ```
 
+## 图片和语音
+
+bridge 现在会尝试处理 iLink 媒体消息：
+
+```text
+收图/语音：getupdates -> CDN 下载 -> AES-128-ECB 解密 -> 保存到 state-dir/media -> 把本地路径传给 Codex
+发图/语音：Codex 回复媒体标记 -> getuploadurl -> AES-128-ECB 加密上传 CDN -> sendmessage
+```
+
+入站图片、语音、文件、视频会保存到：
+
+```text
+<state-dir>/media/<sender-id-base64url>/
+```
+
+出站回复支持这些标记：
+
+```text
+WECHAT_IMAGE: /absolute/path/to/image.png
+WECHAT_VOICE: /absolute/path/to/audio.silk playtime_ms=2000
+```
+
+也会自动识别本地 Markdown 图片路径，例如：
+
+```text
+![preview](/absolute/path/to/image.png)
+```
+
+语音发送目前只负责上传并按扩展名设置 encode_type，不做本地音频转码；最稳的是传 `.silk` 文件。
+
 ## 微信命令
 
 ```text
@@ -142,6 +173,7 @@ bun codex-wechat-ilink.ts ask --backend exec --message "只回复 pong"
 
 ```text
 --state-dir PATH             默认 ~/.codex/channels/wechat
+--cdn-base-url URL           默认 https://novac2c.cdn.weixin.qq.com/c2c
 --workspace PATH             Codex 工作目录，默认当前目录
 --projects PATH              项目路由 JSON
 --backend app-server|exec    默认 app-server

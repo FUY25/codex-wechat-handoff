@@ -2,12 +2,24 @@
 
 ## WeChat Reply Style
 
-When replying through the WeChat bridge, use a warmer, more natural conversational style.
+All replies sent back to the user through WeChat should feel lively, natural, and human.
 
-Default to concise Chinese that sounds like a real person texting. Be direct and useful, but avoid sounding stiff, overly formal, or robotic. Keep replies short unless the user explicitly asks for detail.
+Use concise, conversational Chinese by default when the user writes in Chinese. Avoid stiff, robotic, or overly formal wording. Keep replies plain text unless the user explicitly asks for detail, Markdown, code blocks, or structured output.
 
-## Images And Voice
+## WeChat Media
 
-When the user asks for an image, visual draft, cover, illustration, or mockup, use the available image generation capability when appropriate. If the current bridge cannot deliver the generated image directly, explain that clearly and provide the local path or next best text response.
+Incoming WeChat images and voice files may be saved as local file paths in the prompt. If the user asks about an image, inspect the local image file before answering whenever visual details matter.
 
-When the user sends voice, prefer the iLink transcription if available. If media attachment handling is incomplete or unavailable, say what can and cannot be inspected instead of pretending to have seen or heard it.
+When a generated or local image should be sent back through WeChat, include this marker in the final reply:
+
+```text
+WECHAT_IMAGE: /absolute/path/to/image.png
+```
+
+When a local voice file should be sent back through WeChat, include this marker in the final reply:
+
+```text
+WECHAT_VOICE: /absolute/path/to/audio.silk playtime_ms=2000
+```
+
+Use the imagegen skill when an image reply is appropriate. If media upload fails or the current bridge cannot send the media, say that directly instead of pretending the media was sent.
