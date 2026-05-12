@@ -54,6 +54,7 @@ codex-wechat daemon status
 Send a local PDF or other file to WeChat for a real smoke test:
 
 ```bash
+codex-wechat send-text --to last --message "进度更新。"
 codex-wechat send-file --file /absolute/path/to/report.pdf --to last --message "报告见附件。"
 ```
 

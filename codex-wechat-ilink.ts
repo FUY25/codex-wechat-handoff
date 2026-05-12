@@ -3607,6 +3607,35 @@ async function commandSendFile(options: RuntimeOptions, args: Args): Promise<voi
   console.log(`client_ids: ${clientIds.join(",")}`);
 }
 
+async function commandSendText(options: RuntimeOptions, args: Args): Promise<void> {
+  const message = optionString(args, "message", args._[1] ?? "");
+  if (!message.trim()) throw new Error("send-text 需要 --message TEXT。");
+  const toArg = typeof args.to === "string" ? args.to : "last";
+
+  if (options.dryRun) {
+    console.log("dry-run: would send text");
+    console.log(`to: ${toArg}`);
+    console.log(`message: ${message}`);
+    return;
+  }
+
+  const state = loadBridgeState(options.stateDir);
+  const senderId = resolveTargetSender(state, options.stateDir, toArg);
+  const resolvedContext = resolveProactiveContextToken(options.stateDir, senderId, { allowEmptyFallback: true });
+  if (resolvedContext.contextToken === null) throw new Error(`No context token available for ${senderId}`);
+  const account = loadAccount(options.stateDir);
+  const clientIds: string[] = [];
+  for (const chunk of chunkTextForWechat(message.trim())) {
+    clientIds.push(await sendTextMessage(account, senderId, chunk, resolvedContext.contextToken));
+  }
+  appendBridgeEvent(options.stateDir, {
+    type: "reply_sent",
+    data: { senderId, clientIds, context: "text_notice", contextSource: resolvedContext.source },
+  });
+  console.log("sent text");
+  console.log(`client_ids: ${clientIds.join(",")}`);
+}
+
 async function commandSendImage(options: RuntimeOptions, args: Args): Promise<void> {
   const rawFile = optionString(args, "file", args._[1] ?? "");
   if (!rawFile) throw new Error("send-image 需要 --file PATH。");
@@ -4026,6 +4055,7 @@ Usage:
   codex-wechat pull-current [--project current|NAME] [--thread-id ID]
   codex-wechat carry-status [--project current|NAME]
   codex-wechat render-html --html PATH [--pdf PATH] [--png PATH] [--renderer auto|chrome|quicklook]
+  codex-wechat send-text --message "..." [--to last|SENDER]
   codex-wechat send-file --file PATH [--to last|SENDER] [--message "..."]
   codex-wechat send-image --file PATH [--to last|SENDER] [--message "..."]
 
@@ -4108,6 +4138,8 @@ async function main(): Promise<void> {
     await commandPullCurrent(options, args);
   } else if (command === "render-html") {
     await commandRenderHtml(options, args);
+  } else if (command === "send-text") {
+    await commandSendText(options, args);
   } else if (command === "send-file") {
     await commandSendFile(options, args);
   } else if (command === "send-image") {

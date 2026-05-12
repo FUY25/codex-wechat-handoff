@@ -847,6 +847,32 @@ describe("cli and skill packaging", () => {
     });
   });
 
+  test("send-text CLI supports dry-run without account credentials", () => {
+    withTempDir((dir) => {
+      const result = Bun.spawnSync({
+        cmd: [
+          process.execPath,
+          path.join(import.meta.dir, "codex-wechat-ilink.ts"),
+          "send-text",
+          "--state-dir",
+          dir,
+          "--to",
+          "last",
+          "--message",
+          "progress update",
+          "--dry-run",
+        ],
+        cwd: import.meta.dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.toString()).toContain("dry-run: would send text");
+      expect(result.stdout.toString()).toContain("message: progress update");
+    });
+  });
+
   test("send-image CLI supports dry-run without account credentials", () => {
     withTempDir((dir) => {
       const imagePath = path.join(dir, "preview.png");

@@ -228,6 +228,7 @@ codex-wechat render-html \
 Send files directly:
 
 ```bash
+codex-wechat send-text --to last --message "Progress update."
 codex-wechat send-file --file /absolute/path/to/report.pdf --to last --message "Report attached."
 codex-wechat send-image --file /absolute/path/to/preview.png --to last --message "Preview attached."
 ```
@@ -247,6 +248,7 @@ codex-wechat carry-status [--project current|NAME]
 codex-wechat discover-sessions [--project current|NAME]
 codex-wechat start [--workspace PATH] [--projects PATH]
 codex-wechat render-html --html PATH [--pdf PATH] [--png PATH] [--renderer auto|chrome|quicklook]
+codex-wechat send-text --message "..." [--to last|SENDER]
 codex-wechat send-file --file PATH [--to last|SENDER] [--message "..."]
 codex-wechat send-image --file PATH [--to last|SENDER] [--message "..."]
 ```
