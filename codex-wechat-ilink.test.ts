@@ -16,6 +16,7 @@ const projects = loadProjectRegistry({
       vibelight: {
         cwd: "/Users/fuyuming/Desktop/project/vibelight",
         defaultMode: "read",
+        model: "gpt-5.4-mini",
       },
       marklab: {
         cwd: "/Users/fuyuming/Desktop/markdown_ai_collab_milkdown_spec",
@@ -29,6 +30,9 @@ describe("bridge command parser", () => {
   test("parses slash commands and treats regular text as a user message", () => {
     expect(parseBridgeCommand("/project vibelight")).toEqual({ type: "project", project: "vibelight" });
     expect(parseBridgeCommand("/mode bypass")).toEqual({ type: "mode", mode: "bypass" });
+    expect(parseBridgeCommand("/model gpt-5.2")).toEqual({ type: "model", model: "gpt-5.2" });
+    expect(parseBridgeCommand("/model default")).toEqual({ type: "model", model: null });
+    expect(parseBridgeCommand("/model")).toEqual({ type: "modelStatus" });
     expect(parseBridgeCommand("/new")).toEqual({ type: "new" });
     expect(parseBridgeCommand("/status")).toEqual({ type: "status" });
     expect(parseBridgeCommand("帮我看一下 README")).toEqual({ type: "message", text: "帮我看一下 README" });
@@ -42,6 +46,10 @@ describe("bridge command parser", () => {
     expect(parseBridgeCommand("/deploy")).toEqual({
       type: "error",
       message: "Unknown command: /deploy",
+    });
+    expect(parseBridgeCommand("/model gpt 5")).toEqual({
+      type: "error",
+      message: "Model names cannot contain spaces. Use /model default to clear the override.",
     });
   });
 });
@@ -58,12 +66,32 @@ describe("bridge state commands", () => {
     expect(state.senders["sender-a"].activeMode).toBe("bypass");
   });
 
+  test("stores model overrides per sender and active project", () => {
+    const state = createBridgeState();
+
+    const defaultStatus = applyBridgeCommand(state, projects, "sender-a", { type: "modelStatus" });
+    expect(defaultStatus.reply).toContain("model: gpt-5.4-mini");
+
+    const modelResult = applyBridgeCommand(state, projects, "sender-a", { type: "model", model: "gpt-5.2" });
+    expect(modelResult.reply).toContain("model: gpt-5.2");
+    expect(state.senders["sender-a"].projectModels?.vibelight).toBe("gpt-5.2");
+
+    applyBridgeCommand(state, projects, "sender-a", { type: "project", project: "marklab" });
+    expect(state.senders["sender-a"].projectModels?.marklab).toBeUndefined();
+
+    const resetResult = applyBridgeCommand(state, projects, "sender-a", { type: "model", model: null });
+    expect(resetResult.reply).toContain("model: default");
+    expect(state.senders["sender-a"].projectModels?.marklab).toBeUndefined();
+    expect(state.senders["sender-a"].projectModels?.vibelight).toBe("gpt-5.2");
+  });
+
   test("status uses default project before sender has chosen one", () => {
     const state = createBridgeState();
     const result = applyBridgeCommand(state, projects, "sender-a", { type: "status" });
 
     expect(result.reply).toContain("project: vibelight");
     expect(result.reply).toContain("mode: read");
+    expect(result.reply).toContain("model: gpt-5.4-mini");
     expect(result.reply).toContain("thread: none");
     expect(result.reply).toContain("/Users/fuyuming/Desktop/project/vibelight");
   });

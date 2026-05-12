@@ -4,7 +4,8 @@
   "projects": {
     "wechat-to-codex": {
       "cwd": "/Users/fuyuming/Desktop/wechat-to-codex",
-      "defaultMode": "read"
+      "defaultMode": "read",
+      "model": "gpt-5.4-mini"
     },
     "vibelight": {
       "cwd": "/Users/fuyuming/Desktop/project/vibelight",
@@ -16,4 +17,3 @@
     }
   }
 }
-

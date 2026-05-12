@@ -93,7 +93,7 @@ bun codex-wechat-ilink.ts start \
 收到微信消息后，bridge 会：
 
 ```text
-1. 解析 /project、/mode、/status 等命令
+1. 解析 /project、/mode、/model、/status 等命令
 2. 找到 sender + project 对应的 threadId
 3. 没有 threadId 就 thread/start
 4. 有 threadId 就在同一个 thread 上 turn/start
@@ -109,11 +109,14 @@ bun codex-wechat-ilink.ts start \
 /mode read             只读模式
 /mode write            workspace-write 模式
 /mode bypass           danger-full-access 模式
+/model                 查看当前模型
+/model gpt-5.2         当前项目后续消息使用指定模型
+/model default         清掉当前项目模型 override，回到项目或 Codex 默认模型
 /status                查看当前 sender 的项目、模式、thread
 /new                   当前项目开新 Codex thread
 ```
 
-普通消息会发给当前项目的 Codex thread。
+普通消息会发给当前项目的 Codex thread。`/model` 的 override 按“微信 sender + project”保存：你可以在 `vibelight` 用一个模型，在 `marklab` 用另一个模型。
 
 ## 本地测试 Codex 调用
 
@@ -143,9 +146,23 @@ bun codex-wechat-ilink.ts ask --backend exec --message "只回复 pong"
 --projects PATH              项目路由 JSON
 --backend app-server|exec    默认 app-server
 --codex-bin PATH             Codex CLI 路径，默认 codex
---model MODEL                可选，传给 Codex
+--model MODEL                可选，启动级 Codex 模型默认值
 --codex-timeout-ms N         默认 120000
 --dry-run                    start 时生成回复但不调用 sendmessage
+```
+
+## 后台常驻
+
+安装用户级 LaunchAgent，让 bridge 在当前 macOS 用户登录时常驻，并在退出后自动拉起：
+
+```bash
+scripts/install-launch-agent.sh
+```
+
+停止并移除：
+
+```bash
+scripts/uninstall-launch-agent.sh
 ```
 
 ## 远程代码工作
@@ -180,3 +197,4 @@ claude --dangerously-load-development-channels server:wechat
 - `context_token` 是发送回复必需字段，脚本只会回复带 `context_token` 的用户消息。
 - token 文件不要提交或发给别人。
 - 默认 `read` 是有意的。确认稳定后，再按需要用 `/mode write` 或临时 `/mode bypass`。
+- 可以用 `/model <model>` 从微信里切当前项目后续消息的 Codex 模型；用 `/model default` 回到默认。

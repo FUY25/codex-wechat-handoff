@@ -104,6 +104,7 @@ export type SenderProjectSession = {
 export type SenderState = {
   activeProject?: string;
   activeMode?: BridgeMode;
+  projectModels?: Record<string, string>;
   sessions: Record<string, SenderProjectSession>;
 };
 
@@ -116,6 +117,8 @@ export type BridgeCommand =
   | { type: "project"; project: string }
   | { type: "projects" }
   | { type: "mode"; mode: BridgeMode }
+  | { type: "model"; model: string | null }
+  | { type: "modelStatus" }
   | { type: "status" }
   | { type: "new" }
   | { type: "error"; message: string };
@@ -314,6 +317,12 @@ function activeMode(state: BridgeState, projects: ProjectRegistry, senderId: str
   return projects.projects[activeProjectName(state, projects, senderId)].defaultMode;
 }
 
+function activeModel(state: BridgeState, projects: ProjectRegistry, senderId: string, projectName?: string): string | undefined {
+  const sender = senderState(state, senderId);
+  const resolvedProjectName = projectName ?? activeProjectName(state, projects, senderId);
+  return sender.projectModels?.[resolvedProjectName] ?? projects.projects[resolvedProjectName].model;
+}
+
 export function parseBridgeCommand(text: string): BridgeCommand {
   const trimmed = text.trim();
   if (!trimmed.startsWith("/")) return { type: "message", text };
@@ -331,6 +340,17 @@ export function parseBridgeCommand(text: string): BridgeCommand {
     const mode = normalizeMode(arg);
     if (!mode) return { type: "error", message: `Unknown mode: ${arg || "(empty)"}. Use read, write, or bypass.` };
     return { type: "mode", mode };
+  }
+  if (command === "/model") {
+    if (!arg) return { type: "modelStatus" };
+    const normalized = arg.toLowerCase();
+    if (normalized === "default" || normalized === "reset" || normalized === "auto") {
+      return { type: "model", model: null };
+    }
+    if (/\s/.test(arg)) {
+      return { type: "error", message: "Model names cannot contain spaces. Use /model default to clear the override." };
+    }
+    return { type: "model", model: arg };
   }
   if (command === "/status") return { type: "status" };
   if (command === "/new") return { type: "new" };
@@ -361,9 +381,10 @@ export function applyBridgeCommand(
     }
     sender.activeProject = command.project;
     sender.activeMode ??= projects.projects[command.project].defaultMode;
+    const model = activeModel(state, projects, senderId, command.project) ?? "default";
     return {
       handled: true,
-      reply: `project: ${command.project}\nmode: ${sender.activeMode}\ncwd: ${projects.projects[command.project].cwd}`,
+      reply: `project: ${command.project}\nmode: ${sender.activeMode}\nmodel: ${model}\ncwd: ${projects.projects[command.project].cwd}`,
     };
   }
 
@@ -375,7 +396,22 @@ export function applyBridgeCommand(
   const projectName = activeProjectName(state, projects, senderId);
   const project = projects.projects[projectName];
   const mode = activeMode(state, projects, senderId);
+  const model = activeModel(state, projects, senderId, projectName);
   const session = sender.sessions[projectName];
+
+  if (command.type === "modelStatus") {
+    return { handled: true, reply: `model: ${model ?? "default"}` };
+  }
+
+  if (command.type === "model") {
+    sender.projectModels ??= {};
+    if (command.model) {
+      sender.projectModels[projectName] = command.model;
+      return { handled: true, reply: `model: ${command.model}\nproject: ${projectName}` };
+    }
+    delete sender.projectModels[projectName];
+    return { handled: true, reply: `model: default\nproject: ${projectName}` };
+  }
 
   if (command.type === "status") {
     return {
@@ -383,6 +419,7 @@ export function applyBridgeCommand(
       reply: [
         `project: ${projectName}`,
         `mode: ${mode}`,
+        `model: ${model ?? "default"}`,
         `thread: ${session?.threadId ?? "none"}`,
         `cwd: ${project.cwd}`,
       ].join("\n"),
@@ -413,6 +450,7 @@ export function buildWechatTurnInput(params: {
   senderId: string;
   projectName: string;
   mode: BridgeMode;
+  model?: string;
   text: string;
 }): string {
   return [
@@ -420,6 +458,7 @@ export function buildWechatTurnInput(params: {
     `sender_id: ${params.senderId}`,
     `project: ${params.projectName}`,
     `mode: ${params.mode}`,
+    ...(params.model ? [`model: ${params.model}`] : []),
     "",
     "Reply with the exact text that should be sent back to WeChat.",
     "Keep replies concise and plain text unless the user explicitly asks for detail.",
@@ -443,6 +482,7 @@ class CodexAppServerClient {
     threadId?: string;
     cwd: string;
     mode: BridgeMode;
+    model?: string;
     input: string;
     projectName: string;
   }): Promise<AppServerRunResult> {
@@ -463,7 +503,7 @@ class CodexAppServerClient {
       input: [{ type: "text", text: params.input }],
       approvalPolicy: "never",
       cwd: params.cwd,
-      model: this.options.codexModel ?? null,
+      model: params.model ?? this.options.codexModel ?? null,
       sandboxPolicy: sandboxForMode(params.mode, params.cwd),
     });
     const turnId = turn?.turn?.id;
@@ -482,13 +522,13 @@ class CodexAppServerClient {
     this.initialized = false;
   }
 
-  private async startThread(params: { cwd: string; mode: BridgeMode; projectName: string }): Promise<string> {
+  private async startThread(params: { cwd: string; mode: BridgeMode; model?: string; projectName: string }): Promise<string> {
     const response = await this.request("thread/start", {
       cwd: params.cwd,
       approvalPolicy: "never",
       sandbox: legacySandboxForMode(params.mode),
       ephemeral: false,
-      model: this.options.codexModel ?? null,
+      model: params.model ?? this.options.codexModel ?? null,
       sessionStartSource: "startup",
       developerInstructions: [
         "You are Codex connected to WeChat through a local bridge.",
@@ -501,14 +541,14 @@ class CodexAppServerClient {
     return threadId;
   }
 
-  private async resumeThread(params: { threadId?: string; cwd: string; mode: BridgeMode; projectName: string }): Promise<string> {
+  private async resumeThread(params: { threadId?: string; cwd: string; mode: BridgeMode; model?: string; projectName: string }): Promise<string> {
     if (!params.threadId) throw new Error("cannot resume without a thread id");
     const response = await this.request("thread/resume", {
       threadId: params.threadId,
       cwd: params.cwd,
       approvalPolicy: "never",
       sandbox: legacySandboxForMode(params.mode),
-      model: this.options.codexModel ?? null,
+      model: params.model ?? this.options.codexModel ?? null,
       developerInstructions: [
         "You are Codex connected to WeChat through a local bridge.",
         `Active project: ${params.projectName}`,
@@ -1015,16 +1055,19 @@ async function commandAsk(options: RuntimeOptions, args: Args): Promise<void> {
     const projectName = projects.defaultProject;
     const project = projects.projects[projectName];
     const mode = project.defaultMode;
+    const model = project.model ?? options.codexModel;
     const appServer = new CodexAppServerClient(options);
     try {
       const run = await appServer.runTurn({
         cwd: project.cwd,
         mode,
+        model,
         projectName,
         input: buildWechatTurnInput({
           senderId,
           projectName,
           mode,
+          model,
           text: message,
         }),
       });
@@ -1105,10 +1148,12 @@ async function commandStart(options: RuntimeOptions): Promise<void> {
           const projectName = activeProjectName(bridgeState, projects, senderId);
           const project = projects.projects[projectName];
           const mode = activeMode(bridgeState, projects, senderId);
+          const model = activeModel(bridgeState, projects, senderId, projectName) ?? options.codexModel;
           const input = buildWechatTurnInput({
             senderId,
             projectName,
             mode,
+            model,
             text: parsed.text,
           });
 
@@ -1118,6 +1163,7 @@ async function commandStart(options: RuntimeOptions): Promise<void> {
               threadId: existingSession?.threadId,
               cwd: project.cwd,
               mode,
+              model,
               input,
               projectName,
             });
@@ -1133,6 +1179,7 @@ async function commandStart(options: RuntimeOptions): Promise<void> {
               ...options,
               workspace: project.cwd,
               codexSandbox: legacySandboxForMode(mode),
+              codexModel: model,
             };
             reply = await runCodexForReply(senderId, input, execOptions);
             appendHistory(options.stateDir, senderId, "user", text, options.historyLimit);
@@ -1172,8 +1219,18 @@ Common options:
   --backend app-server|exec    Default: app-server
   --app-server-logs            Print codex app-server stderr logs
   --codex-bin PATH             Default: codex
-  --model MODEL                Optional Codex model override
+  --model MODEL                Optional startup-level Codex model default
   --codex-timeout-ms N         Default: 120000
+
+WeChat commands:
+  /projects
+  /project <name>
+  /mode read|write|bypass
+  /model
+  /model <model>
+  /model default
+  /status
+  /new
 `);
 }
 
