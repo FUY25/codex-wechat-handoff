@@ -36,12 +36,13 @@ Explain the relationship clearly:
 
 - `project`: a local workspace allowlist and routing target, such as `handoff`, `vibelight`, or `marklab`.
 - Default WeChat chat: the normal phone-side agent session for a sender plus project, similar to OpenClaw-style mobile chat storage.
+- Default `inbox`: the bridge-owned WeChat-only workspace at `~/.codex-wechat-handoff/workspaces/inbox`; it is safe to start writable because it is not a real code repo.
 - Carry-over: temporarily attaches the current Desktop Codex thread to WeChat so the phone continues from the active Desktop context.
 - Pull-back: returns that attached Desktop thread to the computer and summarizes the phone-side continuation.
 - Detach: exits Desktop carry-over and returns WeChat to its previous phone-owned project session.
-- `/project <name>`: switches the active project for that sender. Each project has its own phone-side session/thread; it does not change the cwd of one existing thread.
+- `/project <name>`: switches the active project for that sender. Each project has its own phone-side session/thread; it does not change the cwd of one existing thread. Mode is restored from that project's existing session or default. The command reply should repeat this binding so users do not confuse project switching with thread cwd mutation.
 
-Status: implemented in onboarding and docs.
+Status: implemented in onboarding, docs, and `/project` switch replies.
 
 ## Allowed Projects Setup
 
@@ -51,7 +52,7 @@ Desired flow:
 
 1. User tells the local AI agent which folders should be reachable from WeChat.
 2. Agent updates `projects.json` with safe project names and absolute cwd paths.
-3. Agent keeps default mode as `read` unless the user explicitly chooses `write`.
+3. Agent runs `codex-wechat init` to create the safe `inbox`, then keeps real code project mode as `read` unless the user explicitly chooses `write`.
 4. Agent runs `codex-wechat doctor` and confirms every project cwd exists.
 5. Agent tells the user the exact mobile commands, for example:
 

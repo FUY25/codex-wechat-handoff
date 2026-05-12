@@ -14,15 +14,15 @@ Never ask the user to paste tokens. Never print `account.json`, bot tokens, send
 Ask the user for:
 
 - Project paths to expose.
-- Default project name.
-- Default mode: `read`, `write`, or `bypass`.
+- Whether to keep the default WeChat-only `inbox` project.
+- Default mode for each real code project: usually `read`, optionally `write`, rarely `bypass`.
 - Whether to install the background daemon.
 - Whether to install the Codex skill.
 
 Run:
 
-1. `codex-wechat init --project <name> --cwd <absolute-project-path>`
-2. Add any additional allowed projects with `codex-wechat project add <name> --cwd <absolute-project-path> --mode read`
+1. `codex-wechat init`
+2. Add allowed real code projects with `codex-wechat project add <name> --cwd <absolute-project-path> --mode read`
 3. `codex-wechat setup`
 4. `codex-wechat doctor`
 5. `codex-wechat daemon install`
@@ -37,12 +37,13 @@ To continue this Desktop Codex session on your phone, tell Codex: carry this to 
 
 ## Safety Rules
 
-- Keep the default project mode as `read` unless the user explicitly chooses write access.
+- `codex-wechat init` creates a default WeChat-only `inbox` under `~/.codex-wechat-handoff/workspaces/inbox` in `write` mode. This is safe because it is not a real code repo.
+- Keep real code projects in `read` mode unless the user explicitly chooses write access.
 - Treat `/mode bypass` as dangerous. Explain that it grants local full access before enabling it.
 - Keep sender access explicit. Do not configure a public install to respond to every WeChat sender.
 - Do not start a second daemon if `codex-wechat daemon status` shows one already running for the same state directory.
 - Use `codex-wechat doctor` after setup and after daemon install.
-- Explain that `/project <name>` switches to that project's own mobile session and Codex thread; it does not mutate one thread's cwd.
+- Explain project/session binding every time it is relevant: `/project <name>` switches to that project's own mobile session and Codex thread; it does not mutate one thread's cwd. Mode is restored from that project's existing session or default. Only carry-over temporarily attaches the current Desktop thread to WeChat.
 - Match the user's interaction language when explaining commands. Use Chinese for Chinese onboarding and English for English onboarding.
 
 ## Troubleshooting Flow

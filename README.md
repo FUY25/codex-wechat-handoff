@@ -8,13 +8,14 @@ Codex WeChat Handoff connects personal WeChat iLink to Codex app-server. It is b
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/FUY25/codex-wechat-handoff/main/install.sh | bash
-codex-wechat init --project my-project --cwd /absolute/path/to/my-project
+codex-wechat init
+codex-wechat project add my-project --cwd /absolute/path/to/my-project --mode read
 codex-wechat setup
 codex-wechat daemon install
 codex-wechat doctor
 ```
 
-The setup flow saves credentials under `~/.codex-wechat-handoff` by default. Do not paste or publish those files.
+`codex-wechat init` creates a default WeChat-only `inbox` project under `~/.codex-wechat-handoff/workspaces/inbox`. Add real code folders explicitly with `codex-wechat project add`. The setup flow saves credentials under `~/.codex-wechat-handoff` by default. Do not paste or publish those files.
 
 ## Install with One Prompt
 
@@ -103,21 +104,29 @@ There is no public callback URL and no WebSocket server to expose. The local dae
 /help                  list commands
 ```
 
-Default permission mode is `read`. Use `/mode write` only for projects you want Codex to edit. Use `/mode bypass` only when you intentionally want full local access from WeChat.
+The default `inbox` project starts in `write` mode because it lives inside the bridge-owned workspace. Real code projects should usually start in `read` mode. Use `/mode write` only for projects you want Codex to edit. Use `/mode bypass` only when you intentionally want full local access from WeChat.
 
-`/project <name>` does not move one existing Codex thread to a different folder. It changes the active project for that WeChat sender. Each project has its own mobile session and Codex thread. Desktop carry-over is a temporary attachment of the current Desktop thread on top of that per-project mobile session.
+Project/session binding is strict: `/project <name>` does not move one existing Codex thread to a different folder. It changes the active project for that WeChat sender, and each project has its own mobile session and Codex thread. Mode follows that target project's existing session or default, so `bypass` from one project does not silently carry into another. Desktop carry-over is the only flow that temporarily attaches the current Desktop thread on top of that per-project mobile session.
 
 If a long-running Codex thread exceeds the model context window, Codex may compact or summarize internally. The bridge continues routing to the same thread id; compaction behavior belongs to Codex itself.
 
 ## Project Config
 
-Create a safe local config:
+Create a safe local config with a default WeChat-only inbox:
 
 ```bash
-codex-wechat init --project my-project --cwd /absolute/path/to/my-project
+codex-wechat init
 ```
 
-Add another allowed project without hand-editing JSON:
+This creates:
+
+```text
+defaultProject: inbox
+cwd: ~/.codex-wechat-handoff/workspaces/inbox
+mode: write
+```
+
+Add allowed real code projects without hand-editing JSON:
 
 ```bash
 codex-wechat project add vibelight --cwd /absolute/path/to/vibelight --mode read
@@ -131,6 +140,8 @@ Then from WeChat:
 /project vibelight
 /status
 ```
+
+Every `/project <name>` switch tells the user that they are switching to that project's own mobile session and Codex thread. It is not a cwd mutation on the previous thread, and the active mode is restored from that project's session or default.
 
 Or start from the example:
 
@@ -216,7 +227,9 @@ codex-wechat send-image --file /absolute/path/to/preview.png --to last --message
 ## CLI Reference
 
 ```text
-codex-wechat init [--project NAME] [--cwd PATH]
+codex-wechat init [--project NAME] [--cwd PATH] [--mode read|write|bypass]
+codex-wechat project add <name> --cwd PATH [--mode read|write|bypass]
+codex-wechat project list
 codex-wechat setup [--force]
 codex-wechat doctor
 codex-wechat daemon install|status|logs|stop|uninstall

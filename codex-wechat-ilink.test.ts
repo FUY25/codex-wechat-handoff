@@ -121,9 +121,35 @@ describe("bridge state commands", () => {
     const modeResult = applyBridgeCommand(state, projects, "sender-a", { type: "mode", mode: "bypass" });
 
     expect(projectResult.reply).toContain("project: marklab");
+    expect(projectResult.reply).toContain("project/session binding");
+    expect(projectResult.reply).toContain("switching projects switches to that project's own mobile session and Codex thread");
+    expect(projectResult.reply).toContain("does not change the cwd of the current thread");
     expect(modeResult.reply).toContain("mode: bypass");
     expect(state.senders["sender-a"].activeProject).toBe("marklab");
     expect(state.senders["sender-a"].activeMode).toBe("bypass");
+  });
+
+  test("project switching resets mode to that project's session or default", () => {
+    const state = createBridgeState();
+    state.senders["sender-a"] = {
+      activeProject: "vibelight",
+      activeMode: "bypass",
+      sessions: {
+        marklab: {
+          threadId: "thread-marklab",
+          cwd: "/workspace/marklab",
+          mode: "write",
+        },
+      },
+    };
+
+    const existingSession = applyBridgeCommand(state, projects, "sender-a", { type: "project", project: "marklab" });
+    expect(existingSession.reply).toContain("mode: write");
+    expect(state.senders["sender-a"].activeMode).toBe("write");
+
+    const defaultProject = applyBridgeCommand(state, projects, "sender-a", { type: "project", project: "vibelight" });
+    expect(defaultProject.reply).toContain("mode: read");
+    expect(state.senders["sender-a"].activeMode).toBe("read");
   });
 
   test("stores model overrides per sender and active project", () => {
@@ -920,6 +946,33 @@ describe("cli and skill packaging", () => {
     });
   });
 
+  test("init without explicit project creates a writable inbox workspace", () => {
+    withTempDir((dir) => {
+      const result = Bun.spawnSync({
+        cmd: [
+          process.execPath,
+          path.join(import.meta.dir, "codex-wechat-ilink.ts"),
+          "init",
+          "--state-dir",
+          dir,
+        ],
+        cwd: import.meta.dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      expect(result.exitCode).toBe(0);
+      const config = JSON.parse(readFileSync(path.join(dir, "projects.json"), "utf-8"));
+      const inbox = path.join(dir, "workspaces", "inbox");
+      expect(config.defaultProject).toBe("inbox");
+      expect(config.projects.inbox.cwd).toBe(inbox);
+      expect(config.projects.inbox.defaultMode).toBe("write");
+      expect(result.stdout.toString()).toContain("default WeChat inbox");
+      expect(result.stdout.toString()).toContain("codex-wechat project add");
+      expect(loadProjectRegistry({ workspace: "/tmp/unused", projectsConfig: config }).projects.inbox.cwd).toBe(inbox);
+    });
+  });
+
   test("doctor reports missing account and project config", () => {
     withTempDir((dir) => {
       const result = Bun.spawnSync({
@@ -1016,8 +1069,12 @@ describe("cli and skill packaging", () => {
   test("onboarding explains project switching as per-project sessions in both languages", () => {
     const text = buildOnboardingMessage();
 
+    expect(text).toContain("Project/session binding");
+    expect(text).toContain("默认 inbox");
     expect(text).toContain("每个 project 有自己的手机 session / Codex thread");
     expect(text).toContain("Each project has its own mobile session and Codex thread");
+    expect(text).toContain("不是换同一个 thread 的 cwd");
+    expect(text).toContain("mode follows the target project session or default");
     expect(text).toContain("/project <name>");
   });
 });

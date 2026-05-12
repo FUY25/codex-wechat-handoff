@@ -1343,10 +1343,12 @@ export function buildOnboardingMessage(): string {
     "4. 回电脑后，对 Codex 说：pull WeChat back",
     "   CLI fallback：codex-wechat pull --project current",
     "",
-    "项目和默认会话：",
-    "默认微信聊天是当前 sender + project 的手机 session。",
-    "每个 project 有自己的手机 session / Codex thread；/project <name> 是切到另一个 project 的 session，不是把当前 thread 强行改 cwd。",
+    "Project/session binding：",
+    "默认 inbox 是微信专用的安全起点，一般放在 ~/.codex-wechat-handoff/workspaces/inbox。",
+    "默认微信聊天是当前 sender + project 绑定出来的手机 session。",
+    "每个 project 有自己的手机 session / Codex thread；/project <name> 是切到该 project 绑定的独立 session，不是换同一个 thread 的 cwd。",
     "Each project has its own mobile session and Codex thread; /project <name> switches sessions instead of changing one thread's cwd.",
+    "When you switch projects, mode follows the target project session or default.",
     "carry-over 会临时接管电脑上的 Desktop thread。",
     "退出 carry-over 后会回到之前的手机 session。",
     "",
@@ -1627,15 +1629,24 @@ export function applyBridgeCommand(
   }
 
   if (command.type === "project") {
-    if (!projects.projects[command.project]) {
+    const targetProject = projects.projects[command.project];
+    if (!targetProject) {
       return { handled: true, reply: `Unknown project: ${command.project}. Use /projects to list available projects.` };
     }
     sender.activeProject = command.project;
-    sender.activeMode ??= projects.projects[command.project].defaultMode;
+    sender.activeMode = sender.sessions[command.project]?.mode ?? targetProject.defaultMode;
     const model = activeModel(state, projects, senderId, command.project) ?? "default";
     return {
       handled: true,
-      reply: `project: ${command.project}\nmode: ${sender.activeMode}\nmodel: ${model}\ncwd: ${projects.projects[command.project].cwd}`,
+      reply: [
+        `project: ${command.project}`,
+        `mode: ${sender.activeMode}`,
+        `model: ${model}`,
+        `cwd: ${targetProject.cwd}`,
+        "project/session binding: switching projects switches to that project's own mobile session and Codex thread.",
+        "It does not change the cwd of the current thread.",
+        "Mode follows this project's existing session or default.",
+      ].join("\n"),
     };
   }
 
@@ -3104,17 +3115,26 @@ async function commandAsk(options: RuntimeOptions, args: Args): Promise<void> {
 }
 
 async function commandInit(options: RuntimeOptions, args: Args): Promise<void> {
-  const projectName = optionString(args, "project", "default");
-  const cwd = path.resolve(expandHome(optionString(args, "cwd", process.cwd())));
+  const hasExplicitProject = typeof args.project === "string" && args.project.trim().length > 0;
+  const hasExplicitCwd = typeof args.cwd === "string" && args.cwd.trim().length > 0;
+  const createsDefaultInbox = !hasExplicitProject && !hasExplicitCwd;
+  const projectName = createsDefaultInbox ? "inbox" : optionString(args, "project", "default");
+  const cwd = createsDefaultInbox
+    ? path.join(options.stateDir, "workspaces", "inbox")
+    : path.resolve(expandHome(optionString(args, "cwd", process.cwd())));
+  const requestedMode = optionString(args, "mode", createsDefaultInbox ? "write" : "read");
+  const defaultMode = normalizeMode(requestedMode);
+  if (!defaultMode) throw new Error("Unknown mode. Use read, write, or bypass.");
   const projectsPath = typeof args.projects === "string" ? path.resolve(expandHome(args.projects)) : defaultProjectsFile(options.stateDir);
   mkdirSync(path.dirname(projectsPath), { recursive: true });
+  if (createsDefaultInbox) mkdirSync(cwd, { recursive: true });
   const config: ProjectsConfig = {
     defaultProject: projectName,
     allowedSenderIds: [],
     projects: {
       [projectName]: {
         cwd,
-        defaultMode: "read",
+        defaultMode,
       },
     },
   };
@@ -3125,6 +3145,16 @@ async function commandInit(options: RuntimeOptions, args: Args): Promise<void> {
     // Best effort only.
   }
   console.log(`created: ${projectsPath}`);
+  if (createsDefaultInbox) {
+    console.log(`default WeChat inbox: ${projectName}`);
+    console.log(`inbox workspace: ${cwd}`);
+    console.log("Add real code projects with:");
+    console.log("codex-wechat project add <name> --cwd /absolute/path/to/project --mode read");
+  } else {
+    console.log(`default project: ${projectName}`);
+    console.log(`cwd: ${cwd}`);
+    console.log(`mode: ${defaultMode}`);
+  }
   console.log("Next: codex-wechat setup");
   console.log("Then: codex-wechat doctor");
   console.log("Then: codex-wechat daemon install");
@@ -3966,7 +3996,7 @@ function printHelp(): void {
   console.log(`Codex WeChat Handoff
 
 Usage:
-  codex-wechat init [--project NAME] [--cwd PATH]
+  codex-wechat init [--project NAME] [--cwd PATH] [--mode read|write|bypass]
   codex-wechat project add <name> --cwd PATH [--mode read|write|bypass]
   codex-wechat project list
   codex-wechat doctor

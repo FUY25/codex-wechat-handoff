@@ -103,7 +103,9 @@ codex-wechat project add <name> --cwd /absolute/path/to/project --mode read
 codex-wechat doctor
 ```
 
-Then tell them to use `/projects`, `/project <name>`, and `/status` on mobile. Explain that `/project <name>` switches to that project's own mobile session and Codex thread; it does not move the current thread to another cwd.
+For a fresh install, `codex-wechat init` creates the default WeChat-only `inbox` project under `~/.codex-wechat-handoff/workspaces/inbox` in `write` mode. Treat real code projects separately and add them with `project add`, usually in `read` mode first.
+
+Then tell them to use `/projects`, `/project <name>`, and `/status` on mobile. Explain project/session binding clearly: `/project <name>` switches to that project's own mobile session and Codex thread; it does not move the current thread to another cwd. Mode is restored from that project's existing session or default. Only carry-over temporarily attaches the current Desktop thread to WeChat.
 
 ## Rich WeChat Output
 
@@ -121,4 +123,5 @@ When communicating with the user through WeChat, keep normal status replies shor
 - Do not ask the user to paste tokens.
 - Prefer `--project current` from Desktop unless the user names a project.
 - Keep `mode` separate from carry state; phone-side `/mode read|write|bypass` controls permissions.
+- Default `inbox` can be writable because it is bridge-owned. Real code projects should start read-only unless the user explicitly grants write access.
 - Match the user's language when explaining onboarding. Chinese user messages should get Chinese explanations; English user messages should get English explanations.
