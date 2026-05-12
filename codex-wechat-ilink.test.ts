@@ -671,6 +671,14 @@ describe("cli and skill packaging", () => {
     expect(pkg.bin?.["codex-wechat"]).toBe("./bin/codex-wechat");
   });
 
+  test("package uses public product metadata", () => {
+    const pkg = JSON.parse(readFileSync(path.join(import.meta.dir, "package.json"), "utf-8"));
+
+    expect(pkg.name).toBe("codex-wechat-handoff");
+    expect(pkg.private).toBe(false);
+    expect(pkg.bin?.["codex-wechat"]).toBe("./bin/codex-wechat");
+  });
+
   test("repo ships a Codex skill for carry-over commands", () => {
     const skill = readFileSync(path.join(import.meta.dir, "skills", "codex-wechat", "SKILL.md"), "utf-8");
 

@@ -72,15 +72,9 @@ bun codex-wechat-ilink.ts setup --state-dir ./.codex-wechat
 cp projects.example.json projects.local.json
 ```
 
-当前本机的 `projects.local.json` 已包含：
+默认只暴露明确配置的 sender id。不要在公开安装里把所有微信 sender 都放开；首次绑定后运行 `codex-wechat sender allow <sender_id>`，或使用 setup wizard 写入 allowlist。
 
-```text
-wechat-to-codex -> /Users/fuyuming/Desktop/wechat-to-codex
-vibelight       -> /Users/fuyuming/Desktop/project/vibelight
-marklab         -> /Users/fuyuming/Desktop/markdown_ai_collab_milkdown_spec
-```
-
-如果 `allowedSenderIds` 非空，只有列出的微信 sender 可以触发 Codex。
+如果 `allowedSenderIds` 非空，只有列出的微信 sender 可以触发 Codex。公开使用时建议保持非空，项目默认权限保持 `read`，需要写代码时再显式切换 `/mode write`。
 
 ## 启动 Codex 微信桥
 

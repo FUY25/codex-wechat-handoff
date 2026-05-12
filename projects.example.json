@@ -1,18 +1,11 @@
 {
-  "defaultProject": "wechat-to-codex",
-  "allowedSenderIds": [],
+  "defaultProject": "example",
+  "allowedSenderIds": [
+    "replace-with-your-wechat-sender-id-after-binding"
+  ],
   "projects": {
-    "wechat-to-codex": {
-      "cwd": "/Users/fuyuming/Desktop/wechat-to-codex",
-      "defaultMode": "read",
-      "model": "gpt-5.4-mini"
-    },
-    "vibelight": {
-      "cwd": "/Users/fuyuming/Desktop/project/vibelight",
-      "defaultMode": "read"
-    },
-    "marklab": {
-      "cwd": "/Users/fuyuming/Desktop/markdown_ai_collab_milkdown_spec",
+    "example": {
+      "cwd": "/absolute/path/to/your/project",
       "defaultMode": "read"
     }
   }
