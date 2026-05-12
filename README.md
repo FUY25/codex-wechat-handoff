@@ -8,6 +8,23 @@
 
 这里没有使用 Claude Code 的 development channel。bridge 会长轮询 iLink；每个微信 sender + project 对应一个持久 Codex thread，后续消息在同一个 thread 上继续 `turn/start`。`codex exec` 仍保留为 fallback backend。
 
+## Install with one prompt
+
+In Codex Desktop or another local coding agent, say:
+
+```text
+Install Codex WeChat Handoff by following:
+https://raw.githubusercontent.com/FUY25/codex-wechat-handoff/stage0-reliability-foundation/INSTALL.md
+
+Start by setting up carry-over from Codex Desktop to WeChat. Then install the daemon, skill, and run doctor. Do not ask me to paste tokens.
+```
+
+Or install directly:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/FUY25/codex-wechat-handoff/stage0-reliability-foundation/install.sh | bash
+```
+
 ## 我已验证的部分
 
 - 本机有 `codex` CLI：`codex-cli 0.130.0`

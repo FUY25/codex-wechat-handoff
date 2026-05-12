@@ -7,6 +7,17 @@ description: Use when the user asks to carry the current Codex work to WeChat, p
 
 Use the local `codex-wechat` CLI. It is the execution layer; this skill only chooses the right command and interprets the result.
 
+## Installation and Onboarding
+
+When helping install this project for a new user, follow `INSTALL.md` in the repository. Lead with the carry-over workflow before generic remote control:
+
+1. Carry the current Codex Desktop session to WeChat.
+2. Continue the same thread from the phone.
+3. Pull the mobile continuation back into Codex Desktop.
+4. Then explain `/project`, `/mode`, `/model`, `/status`, rich PDFs/images, and daemon management.
+
+Never ask the user to paste tokens, and never print `account.json`.
+
 ## Common Commands
 
 Carry the current Desktop thread to WeChat:
@@ -36,7 +47,8 @@ codex-wechat discover-sessions --project current
 Start the always-on listener:
 
 ```bash
-codex-wechat start --projects /Users/fuyuming/Desktop/wechat-to-codex/projects.local.json
+codex-wechat daemon install
+codex-wechat daemon status
 ```
 
 Send a local PDF or other file to WeChat for a real smoke test:
