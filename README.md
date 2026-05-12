@@ -21,10 +21,12 @@
 
 - `codex-wechat-ilink.ts`：主脚本
 - `codex-wechat-ilink.test.ts`：命令解析、状态管理、sandbox 映射测试
+- `bin/codex-wechat`：面向日常使用的 CLI wrapper
+- `skills/codex-wechat/SKILL.md`：Codex Desktop 可加载的 carry-over skill
 - `AGENTS.md`：Codex 通过微信回复时的风格和媒体发送约定
 - `projects.example.json`：项目路由配置示例
 - `projects.local.json`：本机实际项目配置，已被 `.gitignore` 忽略
-- `package.json`：bun 脚本别名
+- `package.json`：bun 脚本别名和 `codex-wechat` bin 声明
 - `.gitignore`：忽略本地 token、临时状态和 npm 包检查产物
 
 ## 先做无登录检查
@@ -144,10 +146,38 @@ WECHAT_VOICE: /absolute/path/to/audio.silk playtime_ms=2000
 /model gpt-5.2         当前项目后续消息使用指定模型
 /model default         清掉当前项目模型 override，回到项目或 Codex 默认模型
 /status                查看当前 sender 的项目、模式、thread
+/health                查看 daemon、iLink、app-server、context token、lock 和最近错误
+/current               查看当前项目、thread、lease 和 parked thread
+/sessions              查看当前 sender 的项目 session 和 attached thread
+/attach latest         把当前项目最新 session attach 到微信
+/attach <thread_id>    手动 attach 一个 Codex thread
+/back                  手机请求切回电脑，等待 Desktop pull-current
+/resume                从手机恢复 remote mode
+/detach                退出 Desktop carry-over，回到之前微信 session
+/history [n]           查看最近事件摘要入口
+/help                  查看微信命令
 /new                   当前项目开新 Codex thread
 ```
 
 普通消息会发给当前项目的 Codex thread。`/model` 的 override 按“微信 sender + project”保存：你可以在 `vibelight` 用一个模型，在 `marklab` 用另一个模型。
+
+如果当前 route 是 Desktop active 或 pending Desktop pull，普通微信消息不会静默写入同一个 thread；bridge 会提示发 `/resume` 后再继续手机 remote mode。
+
+## 运行状态文件
+
+bridge 会在 `--state-dir` 下保存运行状态，用来支持远程排障和后续 carry-over：
+
+```text
+account.json           iLink 登录凭据
+sync_buf.txt           iLink 长轮询游标
+sessions.json          sender/project/thread 状态
+context_tokens.json    每个 sender 最新可用 context_token
+bridge.lock.json       当前 daemon owner 和 heartbeat，避免重复实例
+events.jsonl           结构化事件日志，后续 /wechat pull 会用它生成手机侧 delta
+message_claims/        已处理微信消息 claim，避免重复执行同一条消息
+```
+
+如果微信发了消息但没有回复，优先在微信发 `/health`，它会区分最近一次失败更像是登录、轮询、context token、app-server、active turn 还是项目配置问题。
 
 ## 本地测试 Codex 调用
 
@@ -168,6 +198,63 @@ fallback `exec` backend：
 ```bash
 bun codex-wechat-ilink.ts ask --backend exec --message "只回复 pong"
 ```
+
+## Desktop / WeChat carry-over
+
+这个版本支持把当前 Codex Desktop/CLI thread 绑定到微信 route，再从微信继续，之后从 Desktop 拉回 delta。
+
+日常入口是 `codex-wechat` CLI；开发调试时也可以继续用 `bun codex-wechat-ilink.ts ...`。
+
+从 Codex Desktop 当前会话发起 handoff：
+
+```bash
+codex-wechat carry-current \
+  --project current \
+  --to last
+```
+
+`carry-current` 默认读取当前进程环境里的 `CODEX_THREAD_ID`。如果是在普通终端测试，可以显式传：
+
+```bash
+codex-wechat carry-current \
+  --project vibelight \
+  --to last \
+  --thread-id 019e...
+```
+
+回到电脑后拉回手机期间的继续内容：
+
+```bash
+codex-wechat pull-current --project current
+```
+
+辅助命令：
+
+```bash
+codex-wechat carry-status --project current
+codex-wechat discover-sessions --project vibelight
+```
+
+短别名也可用：
+
+```bash
+codex-wechat carry --project current --to last
+codex-wechat pull --project current
+codex-wechat status --project current
+codex-wechat sessions --project current
+```
+
+`carry-current` 和 `pull-current` 会优先用 `context_tokens.json` 里的最新 token 主动给微信发通知；如果还没有缓存 token，会尝试 iLink 空 context fallback。若服务端拒绝，状态仍会保存，终端会显示 `notification: not_sent (...)`；从微信先发任意一条消息即可建立 context。
+
+## Codex skill
+
+本仓库提供一个本地 skill，让 Codex Desktop 能把“carry this to WeChat”“/wechat pull”“status”等自然语言请求映射到 CLI：
+
+```bash
+ln -s /Users/fuyuming/Desktop/wechat-to-codex/skills/codex-wechat ~/.codex/skills/codex-wechat
+```
+
+当前本机已安装这个 symlink。安装后，新开的 Codex 会话可以直接使用 `codex-wechat` skill；真正执行仍走同一个 CLI。
 
 ## 常用参数
 

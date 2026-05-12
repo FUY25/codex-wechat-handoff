@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "codex-wechat": "./bin/codex-wechat"
+  },
   "scripts": {
     "qr": "bun codex-wechat-ilink.ts qr",
     "setup": "bun codex-wechat-ilink.ts setup",
