@@ -147,7 +147,7 @@ bun codex-wechat-ilink.ts ask --backend exec --message "只回复 pong"
 --backend app-server|exec    默认 app-server
 --codex-bin PATH             Codex CLI 路径，默认 codex
 --model MODEL                可选，启动级 Codex 模型默认值
---codex-timeout-ms N         默认 120000
+--codex-timeout-ms N         默认 600000
 --dry-run                    start 时生成回复但不调用 sendmessage
 ```
 
@@ -158,6 +158,8 @@ bun codex-wechat-ilink.ts ask --backend exec --message "只回复 pong"
 ```bash
 scripts/install-launch-agent.sh
 ```
+
+LaunchAgent 默认把 Codex 单轮处理超时设为 10 分钟。超时或异常时，bridge 会尽量把失败原因发回微信，而不是静默卡住。
 
 停止并移除：
 

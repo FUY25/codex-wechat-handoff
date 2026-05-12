@@ -33,6 +33,8 @@ cat > "${PLIST_PATH}" <<PLIST
     <string>app-server</string>
     <string>--codex-bin</string>
     <string>${CODEX_BIN}</string>
+    <string>--codex-timeout-ms</string>
+    <string>600000</string>
   </array>
 
   <key>WorkingDirectory</key>

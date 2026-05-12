@@ -2,9 +2,10 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 
 const DEFAULT_BASE_URL = "https://ilinkai.weixin.qq.com";
+const DEFAULT_CDN_BASE_URL = "https://novac2c.cdn.weixin.qq.com/c2c";
 const BOT_TYPE = "3";
 const CHANNEL_VERSION = "0.1.0";
 const LONG_POLL_TIMEOUT_MS = 40_000;
@@ -15,7 +16,19 @@ const MSG_TYPE_USER = 1;
 const MSG_TYPE_BOT = 2;
 const MSG_STATE_FINISH = 2;
 const MSG_ITEM_TEXT = 1;
+const MSG_ITEM_IMAGE = 2;
 const MSG_ITEM_VOICE = 3;
+const MSG_ITEM_FILE = 4;
+const MSG_ITEM_VIDEO = 5;
+const UPLOAD_MEDIA_IMAGE = 1;
+const UPLOAD_MEDIA_VIDEO = 2;
+const UPLOAD_MEDIA_FILE = 3;
+const UPLOAD_MEDIA_VOICE = 4;
+const VOICE_ENCODE_PCM = 1;
+const VOICE_ENCODE_AMR = 5;
+const VOICE_ENCODE_SILK = 6;
+const VOICE_ENCODE_MP3 = 7;
+const VOICE_ENCODE_OGG_SPEEX = 8;
 
 type Args = {
   _: string[];
@@ -33,8 +46,57 @@ type Account = {
 type IlinkItem = {
   type?: number;
   text_item?: { text?: string };
-  voice_item?: { text?: string };
+  image_item?: ImageItem;
+  voice_item?: VoiceItem;
+  file_item?: FileItem;
+  video_item?: VideoItem;
   ref_msg?: { title?: string };
+};
+
+type CDNMedia = {
+  encrypt_query_param?: string;
+  aes_key?: string;
+  encrypt_type?: number;
+  full_url?: string;
+};
+
+type ImageItem = {
+  media?: CDNMedia;
+  thumb_media?: CDNMedia;
+  aeskey?: string;
+  url?: string;
+  mid_size?: number;
+  thumb_size?: number;
+  thumb_height?: number;
+  thumb_width?: number;
+  hd_size?: number;
+};
+
+type VoiceItem = {
+  media?: CDNMedia;
+  encode_type?: number;
+  bits_per_sample?: number;
+  sample_rate?: number;
+  playtime?: number;
+  text?: string;
+};
+
+type FileItem = {
+  media?: CDNMedia;
+  file_name?: string;
+  md5?: string;
+  len?: string;
+};
+
+type VideoItem = {
+  media?: CDNMedia;
+  video_size?: number;
+  play_length?: number;
+  video_md5?: string;
+  thumb_media?: CDNMedia;
+  thumb_size?: number;
+  thumb_height?: number;
+  thumb_width?: number;
 };
 
 type IlinkMessage = {
@@ -61,6 +123,7 @@ type HistoryItem = {
 type RuntimeOptions = {
   stateDir: string;
   baseUrl: string;
+  cdnBaseUrl: string;
   workspace: string;
   projectsFile?: string;
   backend: "app-server" | "exec";
@@ -133,6 +196,30 @@ type AppServerRunResult = {
   reply: string;
 };
 
+export type SavedMediaFile = {
+  kind: "image" | "voice" | "file" | "video";
+  path: string;
+  bytes: number;
+  transcript?: string;
+  fileName?: string;
+  encodeType?: number;
+  playtimeMs?: number;
+};
+
+type UploadedFileInfo = {
+  filekey: string;
+  downloadEncryptedQueryParam: string;
+  aeskey: string;
+  fileSize: number;
+  fileSizeCiphertext: number;
+};
+
+type ReplyMediaDirective = {
+  kind: "image" | "voice";
+  path: string;
+  playtimeMs?: number;
+};
+
 type AppServerRequest = {
   id: number;
   method: string;
@@ -191,6 +278,7 @@ function runtimeOptions(args: Args): RuntimeOptions {
   return {
     stateDir: path.resolve(expandHome(optionString(args, "state-dir", defaultStateDir))),
     baseUrl: optionString(args, "base-url", DEFAULT_BASE_URL),
+    cdnBaseUrl: optionString(args, "cdn-base-url", DEFAULT_CDN_BASE_URL),
     workspace: path.resolve(expandHome(optionString(args, "workspace", process.cwd()))),
     projectsFile: typeof args.projects === "string" ? path.resolve(expandHome(args.projects)) : undefined,
     backend: optionString(args, "backend", "app-server") === "exec" ? "exec" : "app-server",
@@ -198,7 +286,7 @@ function runtimeOptions(args: Args): RuntimeOptions {
     codexBin: optionString(args, "codex-bin", "codex"),
     codexModel: typeof args.model === "string" ? args.model : undefined,
     codexSandbox: optionString(args, "codex-sandbox", "read-only"),
-    codexTimeoutMs: optionNumber(args, "codex-timeout-ms", 120_000),
+    codexTimeoutMs: optionNumber(args, "codex-timeout-ms", 600_000),
     historyLimit: optionNumber(args, "history-limit", 12),
     persistCodexSessions: Boolean(args["persist-codex-sessions"]),
     dryRun: Boolean(args["dry-run"]),
@@ -452,7 +540,25 @@ export function buildWechatTurnInput(params: {
   mode: BridgeMode;
   model?: string;
   text: string;
+  mediaFiles?: SavedMediaFile[];
 }): string {
+  const media = params.mediaFiles?.length
+    ? [
+        "",
+        "Incoming WeChat media:",
+        ...params.mediaFiles.map((file, index) => {
+          const parts = [`${index + 1}. ${file.kind}: ${file.path}`, `bytes: ${file.bytes}`];
+          if (file.transcript) parts.push(`transcript: ${file.transcript}`);
+          if (file.playtimeMs !== undefined) parts.push(`playtime_ms: ${file.playtimeMs}`);
+          if (file.encodeType !== undefined) parts.push(`encode_type: ${file.encodeType}`);
+          return parts.join(" | ");
+        }),
+        "",
+        "If visual details matter, inspect the local image file before answering.",
+        "To send an image back through WeChat, include a line exactly like: WECHAT_IMAGE: /absolute/path/to/image.png",
+        "To send a voice message back through WeChat, include a line exactly like: WECHAT_VOICE: /absolute/path/to/audio.silk playtime_ms=2000",
+      ]
+    : [];
   return [
     "source: WeChat",
     `sender_id: ${params.senderId}`,
@@ -465,7 +571,66 @@ export function buildWechatTurnInput(params: {
     "",
     "User message:",
     params.text,
+    ...media,
   ].join("\n");
+}
+
+export function buildInboundUserMessageText(params: { messageText: string; mediaFiles: SavedMediaFile[] }): string {
+  const messageText = params.messageText.trim();
+  if (!params.mediaFiles.length) return messageText;
+
+  const lines = [
+    messageText || "[WeChat media message]",
+    "",
+    "Incoming WeChat media:",
+    ...params.mediaFiles.map((file, index) => {
+      const parts = [`${index + 1}. ${file.kind}: ${file.path}`, `bytes: ${file.bytes}`];
+      if (file.transcript) parts.push(`transcript: ${file.transcript}`);
+      if (file.playtimeMs !== undefined) parts.push(`playtime_ms: ${file.playtimeMs}`);
+      if (file.encodeType !== undefined) parts.push(`encode_type: ${file.encodeType}`);
+      return parts.join(" | ");
+    }),
+  ];
+  return lines.join("\n");
+}
+
+export function parseReplyMediaDirectives(reply: string): { text: string; media: ReplyMediaDirective[] } {
+  const media: ReplyMediaDirective[] = [];
+  const textLines: string[] = [];
+
+  for (const line of reply.split(/\r?\n/)) {
+    const imageMatch = line.match(/^\s*WECHAT_IMAGE:\s+(.+?)\s*$/i);
+    if (imageMatch) {
+      media.push({ kind: "image", path: imageMatch[1].trim() });
+      continue;
+    }
+
+    const voiceMatch = line.match(/^\s*WECHAT_VOICE:\s+(\S+)(?:\s+playtime_ms=(\d+))?\s*$/i);
+    if (voiceMatch) {
+      media.push({
+        kind: "voice",
+        path: voiceMatch[1],
+        ...(voiceMatch[2] ? { playtimeMs: Number(voiceMatch[2]) } : {}),
+      });
+      continue;
+    }
+
+    const withoutMarkdownImages = line.replace(/!\[[^\]]*]\((\/[^)\s]+)\)/g, (_match, imagePath: string) => {
+      media.push({ kind: "image", path: imagePath });
+      return "";
+    });
+    if (withoutMarkdownImages.trim()) textLines.push(withoutMarkdownImages.trimEnd());
+  }
+
+  return { text: textLines.join("\n").trim(), media };
+}
+
+export function formatBridgeError(error: unknown, timeoutMs: number): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes("timed out")) {
+    return `这次 Codex 任务超过 ${Math.round(timeoutMs / 1000)} 秒还没完成，我先停掉了，避免一直卡住。请把任务拆小一点重发，或者让我先切到更长 timeout 后再跑。`;
+  }
+  return `这次处理失败了：${message.slice(0, 500)}`;
 }
 
 class CodexAppServerClient {
@@ -486,30 +651,35 @@ class CodexAppServerClient {
     input: string;
     projectName: string;
   }): Promise<AppServerRunResult> {
-    await this.ensureStarted();
-    let threadId: string;
-    if (params.threadId) {
-      try {
-        threadId = await this.resumeThread(params);
-      } catch (error) {
-        console.error(`Failed to resume Codex thread ${params.threadId}; starting a new thread: ${error instanceof Error ? error.message : String(error)}`);
+    try {
+      await this.ensureStarted();
+      let threadId: string;
+      if (params.threadId) {
+        try {
+          threadId = await this.resumeThread(params);
+        } catch (error) {
+          console.error(`Failed to resume Codex thread ${params.threadId}; starting a new thread: ${error instanceof Error ? error.message : String(error)}`);
+          threadId = await this.startThread(params);
+        }
+      } else {
         threadId = await this.startThread(params);
       }
-    } else {
-      threadId = await this.startThread(params);
+      const turn = await this.request("turn/start", {
+        threadId,
+        input: [{ type: "text", text: params.input }],
+        approvalPolicy: "never",
+        cwd: params.cwd,
+        model: params.model ?? this.options.codexModel ?? null,
+        sandboxPolicy: sandboxForMode(params.mode, params.cwd),
+      });
+      const turnId = turn?.turn?.id;
+      if (!turnId) throw new Error("app-server turn/start did not return a turn id");
+      const reply = await this.waitForTurn(threadId, turnId);
+      return { threadId, reply };
+    } catch (error) {
+      this.stop();
+      throw error;
     }
-    const turn = await this.request("turn/start", {
-      threadId,
-      input: [{ type: "text", text: params.input }],
-      approvalPolicy: "never",
-      cwd: params.cwd,
-      model: params.model ?? this.options.codexModel ?? null,
-      sandboxPolicy: sandboxForMode(params.mode, params.cwd),
-    });
-    const turnId = turn?.turn?.id;
-    if (!turnId) throw new Error("app-server turn/start did not return a turn id");
-    const reply = await this.waitForTurn(threadId, turnId);
-    return { threadId, reply };
   }
 
   stop(): void {
@@ -775,6 +945,134 @@ async function apiPost<T>(baseUrl: string, endpoint: string, token: string, body
   }
 }
 
+function aesEcbPaddedSize(plaintextSize: number): number {
+  return Math.ceil((plaintextSize + 1) / 16) * 16;
+}
+
+function encryptAesEcb(plaintext: Buffer, key: Buffer): Buffer {
+  const cipher = createCipheriv("aes-128-ecb", key, null);
+  return Buffer.concat([cipher.update(plaintext), cipher.final()]);
+}
+
+function decryptAesEcb(ciphertext: Buffer, key: Buffer): Buffer {
+  const decipher = createDecipheriv("aes-128-ecb", key, null);
+  return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+}
+
+export function parseAesKey(aesKeyBase64: string): Buffer {
+  const decoded = Buffer.from(aesKeyBase64, "base64");
+  if (decoded.length === 16) return decoded;
+  if (decoded.length === 32 && /^[0-9a-fA-F]{32}$/.test(decoded.toString("ascii"))) {
+    return Buffer.from(decoded.toString("ascii"), "hex");
+  }
+  throw new Error(`aes_key must decode to 16 raw bytes or 32-char hex string, got ${decoded.length} bytes`);
+}
+
+function mediaAesKeyBase64(hexKey: string): string {
+  return Buffer.from(hexKey, "utf-8").toString("base64");
+}
+
+function buildCdnDownloadUrl(cdnBaseUrl: string, encryptedQueryParam: string): string {
+  return `${cdnBaseUrl}/download?encrypted_query_param=${encodeURIComponent(encryptedQueryParam)}`;
+}
+
+function buildCdnUploadUrl(cdnBaseUrl: string, uploadParam: string, filekey: string): string {
+  return `${cdnBaseUrl}/upload?encrypted_query_param=${encodeURIComponent(uploadParam)}&filekey=${encodeURIComponent(filekey)}`;
+}
+
+async function fetchCdnBytes(cdnBaseUrl: string, media: CDNMedia): Promise<Buffer> {
+  if (!media.full_url && !media.encrypt_query_param) throw new Error("media is missing full_url and encrypt_query_param");
+  const response = await fetch(media.full_url ?? buildCdnDownloadUrl(cdnBaseUrl, media.encrypt_query_param ?? ""));
+  if (!response.ok) {
+    const body = await response.text().catch(() => "(unreadable)");
+    throw new Error(`CDN download ${response.status} ${response.statusText}: ${body.slice(0, 300)}`);
+  }
+  return Buffer.from(await response.arrayBuffer());
+}
+
+async function downloadAndDecrypt(cdnBaseUrl: string, media: CDNMedia, fallbackHexKey?: string): Promise<Buffer> {
+  const encrypted = await fetchCdnBytes(cdnBaseUrl, media);
+  const key = fallbackHexKey ? Buffer.from(fallbackHexKey, "hex") : media.aes_key ? parseAesKey(media.aes_key) : null;
+  return key ? decryptAesEcb(encrypted, key) : encrypted;
+}
+
+async function getUploadUrl(account: Account, body: unknown): Promise<{ upload_param?: string; thumb_upload_param?: string; upload_full_url?: string }> {
+  return apiPost<{ upload_param?: string; thumb_upload_param?: string; upload_full_url?: string }>(
+    account.baseUrl,
+    "ilink/bot/getuploadurl",
+    account.token,
+    body,
+    15_000,
+  );
+}
+
+async function uploadBufferToCdn(params: {
+  cdnBaseUrl: string;
+  uploadParam?: string;
+  uploadFullUrl?: string;
+  filekey: string;
+  aeskey: Buffer;
+  plaintext: Buffer;
+}): Promise<string> {
+  const ciphertext = encryptAesEcb(params.plaintext, params.aeskey);
+  const uploadUrl = params.uploadFullUrl ?? (params.uploadParam ? buildCdnUploadUrl(params.cdnBaseUrl, params.uploadParam, params.filekey) : "");
+  if (!uploadUrl) throw new Error("CDN upload URL missing");
+  const response = await fetch(uploadUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/octet-stream" },
+    body: new Uint8Array(ciphertext),
+  });
+  if (!response.ok) {
+    const body = await response.text().catch(() => "(unreadable)");
+    throw new Error(`CDN upload ${response.status} ${response.statusText}: ${body.slice(0, 300)}`);
+  }
+  const encryptedParam = response.headers.get("x-encrypted-param");
+  if (!encryptedParam) throw new Error("CDN upload response missing x-encrypted-param header");
+  return encryptedParam;
+}
+
+async function uploadMediaFile(params: {
+  account: Account;
+  cdnBaseUrl: string;
+  toUserId: string;
+  filePath: string;
+  mediaType: number;
+}): Promise<UploadedFileInfo> {
+  const plaintext = readFileSync(params.filePath);
+  const rawsize = plaintext.length;
+  const rawfilemd5 = createHash("md5").update(plaintext).digest("hex");
+  const filesize = aesEcbPaddedSize(rawsize);
+  const filekey = randomBytes(16).toString("hex");
+  const aeskey = randomBytes(16);
+  const uploadUrl = await getUploadUrl(params.account, {
+    filekey,
+    media_type: params.mediaType,
+    to_user_id: params.toUserId,
+    rawsize,
+    rawfilemd5,
+    filesize,
+    no_need_thumb: true,
+    aeskey: aeskey.toString("hex"),
+    base_info: { channel_version: CHANNEL_VERSION },
+  });
+  if (!uploadUrl.upload_param && !uploadUrl.upload_full_url) throw new Error(`getuploadurl returned no upload URL: ${JSON.stringify(uploadUrl)}`);
+  const downloadEncryptedQueryParam = await uploadBufferToCdn({
+    cdnBaseUrl: params.cdnBaseUrl,
+    uploadParam: uploadUrl.upload_param,
+    uploadFullUrl: uploadUrl.upload_full_url,
+    filekey,
+    aeskey,
+    plaintext,
+  });
+  return {
+    filekey,
+    downloadEncryptedQueryParam,
+    aeskey: aeskey.toString("hex"),
+    fileSize: rawsize,
+    fileSizeCiphertext: filesize,
+  };
+}
+
 function loadAccount(stateDir: string): Account {
   const file = accountFile(stateDir);
   if (!existsSync(file)) {
@@ -799,21 +1097,163 @@ function saveAccount(stateDir: string, account: Account): void {
 }
 
 function extractTextFromMessage(msg: IlinkMessage): string {
+  const parts: string[] = [];
   for (const item of msg.item_list ?? []) {
     if (item.type === MSG_ITEM_TEXT && item.text_item?.text) {
       const text = item.text_item.text;
       const refTitle = item.ref_msg?.title;
-      return refTitle ? `[引用: ${refTitle}]\n${text}` : text;
+      parts.push(refTitle ? `[引用: ${refTitle}]\n${text}` : text);
     }
     if (item.type === MSG_ITEM_VOICE && item.voice_item?.text) {
-      return item.voice_item.text;
+      parts.push(item.voice_item.text);
     }
   }
-  return "";
+  return parts.join("\n").trim();
 }
 
 function safeUserFileName(userId: string): string {
   return Buffer.from(userId, "utf-8").toString("base64url");
+}
+
+function detectImageExtension(buf: Buffer): string {
+  if (buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return ".png";
+  if (buf.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]))) return ".jpg";
+  if (buf.subarray(0, 6).toString("ascii") === "GIF87a" || buf.subarray(0, 6).toString("ascii") === "GIF89a") return ".gif";
+  if (buf.subarray(0, 4).toString("ascii") === "RIFF" && buf.subarray(8, 12).toString("ascii") === "WEBP") return ".webp";
+  return ".img";
+}
+
+function extensionForVoice(voice?: VoiceItem): string {
+  if (voice?.encode_type === VOICE_ENCODE_SILK) return ".silk";
+  if (voice?.encode_type === VOICE_ENCODE_MP3) return ".mp3";
+  if (voice?.encode_type === VOICE_ENCODE_AMR) return ".amr";
+  if (voice?.encode_type === VOICE_ENCODE_OGG_SPEEX) return ".ogg";
+  if (voice?.encode_type === VOICE_ENCODE_PCM) return ".pcm";
+  return ".voice";
+}
+
+function sanitizeFileName(name: string): string {
+  return name.replace(/[\/\\:\0]/g, "_").trim() || "file.bin";
+}
+
+function saveInboundMediaFile(params: {
+  stateDir: string;
+  senderId: string;
+  kind: SavedMediaFile["kind"];
+  data: Buffer;
+  ext: string;
+  transcript?: string;
+  fileName?: string;
+  encodeType?: number;
+  playtimeMs?: number;
+}): SavedMediaFile {
+  const dir = path.join(params.stateDir, "media", safeUserFileName(params.senderId));
+  mkdirSync(dir, { recursive: true });
+  const safeOriginal = params.fileName ? `-${sanitizeFileName(params.fileName)}` : "";
+  const fileName = `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomBytes(4).toString("hex")}-${params.kind}${safeOriginal}${safeOriginal ? "" : params.ext}`;
+  const filePath = path.join(dir, fileName);
+  writeFileSync(filePath, params.data);
+  try {
+    chmodSync(filePath, 0o600);
+  } catch {
+    // Best effort only.
+  }
+  return {
+    kind: params.kind,
+    path: filePath,
+    bytes: params.data.length,
+    transcript: params.transcript,
+    fileName: params.fileName,
+    encodeType: params.encodeType,
+    playtimeMs: params.playtimeMs,
+  };
+}
+
+async function downloadMediaFromItem(params: {
+  account: Account;
+  cdnBaseUrl: string;
+  stateDir: string;
+  senderId: string;
+  item: IlinkItem;
+}): Promise<SavedMediaFile | null> {
+  const item = params.item;
+  if (item.type === MSG_ITEM_IMAGE && item.image_item?.media?.encrypt_query_param) {
+    const data = await downloadAndDecrypt(params.cdnBaseUrl, item.image_item.media, item.image_item.aeskey);
+    return saveInboundMediaFile({
+      stateDir: params.stateDir,
+      senderId: params.senderId,
+      kind: "image",
+      data,
+      ext: detectImageExtension(data),
+    });
+  }
+
+  if (item.type === MSG_ITEM_VOICE && item.voice_item?.media?.encrypt_query_param) {
+    const data = await downloadAndDecrypt(params.cdnBaseUrl, item.voice_item.media);
+    return saveInboundMediaFile({
+      stateDir: params.stateDir,
+      senderId: params.senderId,
+      kind: "voice",
+      data,
+      ext: extensionForVoice(item.voice_item),
+      transcript: item.voice_item.text,
+      encodeType: item.voice_item.encode_type,
+      playtimeMs: item.voice_item.playtime,
+    });
+  }
+
+  if (item.type === MSG_ITEM_FILE && item.file_item?.media?.encrypt_query_param) {
+    const data = await downloadAndDecrypt(params.cdnBaseUrl, item.file_item.media);
+    const originalName = item.file_item.file_name ? sanitizeFileName(item.file_item.file_name) : undefined;
+    return saveInboundMediaFile({
+      stateDir: params.stateDir,
+      senderId: params.senderId,
+      kind: "file",
+      data,
+      ext: originalName ? "" : ".bin",
+      fileName: originalName,
+    });
+  }
+
+  if (item.type === MSG_ITEM_VIDEO && item.video_item?.media?.encrypt_query_param) {
+    const data = await downloadAndDecrypt(params.cdnBaseUrl, item.video_item.media);
+    return saveInboundMediaFile({
+      stateDir: params.stateDir,
+      senderId: params.senderId,
+      kind: "video",
+      data,
+      ext: ".mp4",
+    });
+  }
+
+  return null;
+}
+
+async function downloadInboundMediaFiles(params: {
+  account: Account;
+  options: RuntimeOptions;
+  senderId: string;
+  msg: IlinkMessage;
+}): Promise<SavedMediaFile[]> {
+  const files: SavedMediaFile[] = [];
+  for (const item of params.msg.item_list ?? []) {
+    if (item.type !== MSG_ITEM_IMAGE && item.type !== MSG_ITEM_VOICE && item.type !== MSG_ITEM_FILE && item.type !== MSG_ITEM_VIDEO) {
+      continue;
+    }
+    try {
+      const file = await downloadMediaFromItem({
+        account: params.account,
+        cdnBaseUrl: params.options.cdnBaseUrl,
+        stateDir: params.options.stateDir,
+        senderId: params.senderId,
+        item,
+      });
+      if (file) files.push(file);
+    } catch (error) {
+      console.error(`媒体下载失败: sender=${params.senderId} type=${item.type} error=${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return files;
 }
 
 function historyFile(stateDir: string, userId: string): string {
@@ -982,6 +1422,94 @@ async function sendTextMessage(account: Account, toUserId: string, text: string,
   return clientId;
 }
 
+async function sendImageMessage(params: {
+  account: Account;
+  cdnBaseUrl: string;
+  toUserId: string;
+  imagePath: string;
+  contextToken: string;
+}): Promise<string> {
+  const uploaded = await uploadMediaFile({
+    account: params.account,
+    cdnBaseUrl: params.cdnBaseUrl,
+    toUserId: params.toUserId,
+    filePath: params.imagePath,
+    mediaType: UPLOAD_MEDIA_IMAGE,
+  });
+  const clientId = `codex-wechat:${Date.now()}-${randomBytes(4).toString("hex")}`;
+  await apiPost(
+    params.account.baseUrl,
+    "ilink/bot/sendmessage",
+    params.account.token,
+    {
+      msg: {
+        from_user_id: "",
+        to_user_id: params.toUserId,
+        client_id: clientId,
+        message_type: MSG_TYPE_BOT,
+        message_state: MSG_STATE_FINISH,
+        item_list: [
+          {
+            type: MSG_ITEM_IMAGE,
+            image_item: {
+              media: {
+                encrypt_query_param: uploaded.downloadEncryptedQueryParam,
+                aes_key: mediaAesKeyBase64(uploaded.aeskey),
+                encrypt_type: 1,
+              },
+              mid_size: uploaded.fileSizeCiphertext,
+            },
+          },
+        ],
+        context_token: params.contextToken,
+      },
+      base_info: { channel_version: CHANNEL_VERSION },
+    },
+    15_000,
+  );
+  return clientId;
+}
+
+async function sendReplyMessage(params: {
+  account: Account;
+  options: RuntimeOptions;
+  toUserId: string;
+  reply: string;
+  contextToken: string;
+}): Promise<string[]> {
+  const parsed = parseReplyMediaDirectives(params.reply);
+  const messageIds: string[] = [];
+  if (parsed.text || !parsed.media.length) {
+    messageIds.push(await sendTextMessage(params.account, params.toUserId, parsed.text || params.reply, params.contextToken));
+  }
+
+  for (const media of parsed.media) {
+    if (media.kind === "image") {
+      messageIds.push(
+        await sendImageMessage({
+          account: params.account,
+          cdnBaseUrl: params.options.cdnBaseUrl,
+          toUserId: params.toUserId,
+          imagePath: media.path,
+          contextToken: params.contextToken,
+        }),
+      );
+      continue;
+    }
+
+    messageIds.push(
+      await sendTextMessage(
+        params.account,
+        params.toUserId,
+        `语音文件已生成，但当前 bridge 还没有实现语音发送：${media.path}`,
+        params.contextToken,
+      ),
+    );
+  }
+
+  return messageIds;
+}
+
 async function commandQR(options: RuntimeOptions): Promise<void> {
   const qr = await fetchQRCode(options.baseUrl);
   const qrFile = await renderLoginQRCode(options.stateDir, qr.qrcode_img_content);
@@ -1125,7 +1653,10 @@ async function commandStart(options: RuntimeOptions): Promise<void> {
         const senderId = msg.from_user_id ?? "";
         const contextToken = msg.context_token ?? "";
         const text = extractTextFromMessage(msg);
-        if (!senderId || !text) continue;
+        const hasMedia = (msg.item_list ?? []).some((item) =>
+          item.type === MSG_ITEM_IMAGE || item.type === MSG_ITEM_VOICE || item.type === MSG_ITEM_FILE || item.type === MSG_ITEM_VIDEO
+        );
+        if (!senderId || (!text && !hasMedia)) continue;
         if (!contextToken) {
           console.error(`跳过消息：缺少 context_token，sender=${senderId}`);
           continue;
@@ -1136,61 +1667,83 @@ async function commandStart(options: RuntimeOptions): Promise<void> {
         }
 
         console.log(`收到消息: sender=${senderId} text=${text.slice(0, 120)}`);
-        const parsed = parseBridgeCommand(text);
-        let reply: string;
+        try {
+          const mediaFiles = hasMedia
+            ? await downloadInboundMediaFiles({
+                account,
+                options,
+                senderId,
+                msg,
+              })
+            : [];
+          const parsed = mediaFiles.length ? ({ type: "message", text } as const) : parseBridgeCommand(text);
+          let reply: string;
 
-        if (parsed.type !== "message") {
-          const commandResult = applyBridgeCommand(bridgeState, projects, senderId, parsed);
-          saveBridgeState(options.stateDir, bridgeState);
-          reply = commandResult.reply;
-        } else {
-          const sender = senderState(bridgeState, senderId);
-          const projectName = activeProjectName(bridgeState, projects, senderId);
-          const project = projects.projects[projectName];
-          const mode = activeMode(bridgeState, projects, senderId);
-          const model = activeModel(bridgeState, projects, senderId, projectName) ?? options.codexModel;
-          const input = buildWechatTurnInput({
-            senderId,
-            projectName,
-            mode,
-            model,
-            text: parsed.text,
-          });
-
-          if (appServer) {
-            const existingSession = sender.sessions[projectName];
-            const run = await appServer.runTurn({
-              threadId: existingSession?.threadId,
-              cwd: project.cwd,
+          if (parsed.type !== "message") {
+            const commandResult = applyBridgeCommand(bridgeState, projects, senderId, parsed);
+            saveBridgeState(options.stateDir, bridgeState);
+            reply = commandResult.reply;
+          } else {
+            const sender = senderState(bridgeState, senderId);
+            const projectName = activeProjectName(bridgeState, projects, senderId);
+            const project = projects.projects[projectName];
+            const mode = activeMode(bridgeState, projects, senderId);
+            const model = activeModel(bridgeState, projects, senderId, projectName) ?? options.codexModel;
+            const input = buildWechatTurnInput({
+              senderId,
+              projectName,
               mode,
               model,
-              input,
-              projectName,
+              text: parsed.text || "[WeChat media message]",
+              mediaFiles,
             });
-            sender.sessions[projectName] = {
-              threadId: run.threadId,
-              cwd: project.cwd,
-              mode,
-            };
-            saveBridgeState(options.stateDir, bridgeState);
-            reply = run.reply;
-          } else {
-            const execOptions: RuntimeOptions = {
-              ...options,
-              workspace: project.cwd,
-              codexSandbox: legacySandboxForMode(mode),
-              codexModel: model,
-            };
-            reply = await runCodexForReply(senderId, input, execOptions);
-            appendHistory(options.stateDir, senderId, "user", text, options.historyLimit);
-            appendHistory(options.stateDir, senderId, "assistant", reply, options.historyLimit);
-          }
-        }
-        console.log(`Codex 回复: ${reply.slice(0, 240)}`);
 
-        if (!options.dryRun) {
-          const clientId = await sendTextMessage(account, senderId, reply, contextToken);
-          console.log(`已发送: client_id=${clientId}`);
+            if (appServer) {
+              const existingSession = sender.sessions[projectName];
+              const run = await appServer.runTurn({
+                threadId: existingSession?.threadId,
+                cwd: project.cwd,
+                mode,
+                model,
+                input,
+                projectName,
+              });
+              sender.sessions[projectName] = {
+                threadId: run.threadId,
+                cwd: project.cwd,
+                mode,
+              };
+              saveBridgeState(options.stateDir, bridgeState);
+              reply = run.reply;
+            } else {
+              const execOptions: RuntimeOptions = {
+                ...options,
+                workspace: project.cwd,
+                codexSandbox: legacySandboxForMode(mode),
+                codexModel: model,
+              };
+              reply = await runCodexForReply(senderId, input, execOptions);
+              appendHistory(options.stateDir, senderId, "user", buildInboundUserMessageText({ messageText: text, mediaFiles }), options.historyLimit);
+              appendHistory(options.stateDir, senderId, "assistant", reply, options.historyLimit);
+            }
+          }
+          console.log(`Codex 回复: ${reply.slice(0, 240)}`);
+
+          if (!options.dryRun) {
+            const clientIds = await sendReplyMessage({ account, options, toUserId: senderId, reply, contextToken });
+            console.log(`已发送: client_id=${clientIds.join(",")}`);
+          }
+        } catch (error) {
+          const reply = formatBridgeError(error, options.codexTimeoutMs);
+          console.error(`消息处理失败: sender=${senderId} error=${error instanceof Error ? error.message : String(error)}`);
+          if (!options.dryRun) {
+            try {
+              const clientId = await sendTextMessage(account, senderId, reply, contextToken);
+              console.log(`已发送错误提示: client_id=${clientId}`);
+            } catch (sendError) {
+              console.error(`错误提示发送失败: ${sendError instanceof Error ? sendError.message : String(sendError)}`);
+            }
+          }
         }
       }
     } catch (error) {

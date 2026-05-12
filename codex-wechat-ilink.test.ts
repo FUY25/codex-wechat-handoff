@@ -1,9 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import {
   applyBridgeCommand,
+  buildInboundUserMessageText,
+  parseAesKey,
   buildWechatTurnInput,
   createBridgeState,
+  formatBridgeError,
   loadProjectRegistry,
+  parseReplyMediaDirectives,
   parseBridgeCommand,
   sandboxForMode,
 } from "./codex-wechat-ilink";
@@ -147,5 +151,97 @@ describe("app-server request helpers", () => {
     expect(input).toContain("project: vibelight");
     expect(input).toContain("mode: write");
     expect(input).toContain("修一下 README");
+  });
+
+  test("adds saved inbound media paths to the turn input", () => {
+    const input = buildWechatTurnInput({
+      senderId: "sender-a",
+      projectName: "vibelight",
+      mode: "write",
+      text: "看下这张图",
+      mediaFiles: [
+        {
+          kind: "image",
+          path: "/tmp/wechat-media/image-1.png",
+          bytes: 123,
+        },
+        {
+          kind: "voice",
+          path: "/tmp/wechat-media/voice-1.silk",
+          bytes: 456,
+          transcript: "这是语音转文字",
+          playtimeMs: 1800,
+        },
+      ],
+    });
+
+    expect(input).toContain("看下这张图");
+    expect(input).toContain("Incoming WeChat media");
+    expect(input).toContain("image: /tmp/wechat-media/image-1.png");
+    expect(input).toContain("voice: /tmp/wechat-media/voice-1.silk");
+    expect(input).toContain("transcript: 这是语音转文字");
+  });
+});
+
+describe("media helpers", () => {
+  test("builds a user message from text, images, and voice transcripts", () => {
+    const text = buildInboundUserMessageText({
+      messageText: "帮我看这个",
+      mediaFiles: [
+        {
+          kind: "image",
+          path: "/tmp/inbound/photo.jpg",
+          bytes: 100,
+        },
+        {
+          kind: "voice",
+          path: "/tmp/inbound/audio.silk",
+          bytes: 200,
+          transcript: "语音内容",
+        },
+      ],
+    });
+
+    expect(text).toContain("帮我看这个");
+    expect(text).toContain("image: /tmp/inbound/photo.jpg");
+    expect(text).toContain("voice: /tmp/inbound/audio.silk");
+    expect(text).toContain("transcript: 语音内容");
+  });
+
+  test("parses explicit WeChat media directives from replies", () => {
+    const result = parseReplyMediaDirectives(
+      [
+        "可以，图在下面。",
+        "WECHAT_IMAGE: /tmp/out/result.png",
+        "WECHAT_VOICE: /tmp/out/reply.silk playtime_ms=2300",
+      ].join("\n"),
+    );
+
+    expect(result.text).toBe("可以，图在下面。");
+    expect(result.media).toEqual([
+      { kind: "image", path: "/tmp/out/result.png" },
+      { kind: "voice", path: "/tmp/out/reply.silk", playtimeMs: 2300 },
+    ]);
+  });
+
+  test("parses local markdown image paths as image directives", () => {
+    const result = parseReplyMediaDirectives("生成好了：![preview](/tmp/out/preview.webp)");
+
+    expect(result.text).toBe("生成好了：");
+    expect(result.media).toEqual([{ kind: "image", path: "/tmp/out/preview.webp" }]);
+  });
+
+  test("parses AES keys encoded as raw bytes or hex text", () => {
+    const raw = Buffer.from("00112233445566778899aabbccddeeff", "hex");
+    const hexText = Buffer.from("00112233445566778899aabbccddeeff", "utf-8");
+
+    expect(parseAesKey(raw.toString("base64")).toString("hex")).toBe("00112233445566778899aabbccddeeff");
+    expect(parseAesKey(hexText.toString("base64")).toString("hex")).toBe("00112233445566778899aabbccddeeff");
+  });
+});
+
+describe("error formatting", () => {
+  test("turn timeouts become a WeChat-visible status message", () => {
+    expect(formatBridgeError(new Error("app-server turn timed out after 600000ms"), 600_000)).toContain("超过 600 秒");
   });
 });
