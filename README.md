@@ -104,13 +104,13 @@ bun codex-wechat-ilink.ts start \
 6. sendmessage 回微信
 ```
 
-## 图片和语音
+## 图片、语音和文件
 
 bridge 现在会尝试处理 iLink 媒体消息：
 
 ```text
 收图/语音：getupdates -> CDN 下载 -> AES-128-ECB 解密 -> 保存到 state-dir/media -> 把本地路径传给 Codex
-发图/语音：Codex 回复媒体标记 -> getuploadurl -> AES-128-ECB 加密上传 CDN -> sendmessage
+发图/语音/文件：Codex 回复媒体标记 -> getuploadurl -> AES-128-ECB 加密上传 CDN -> sendmessage
 ```
 
 入站图片、语音、文件、视频会保存到：
@@ -124,6 +124,7 @@ bridge 现在会尝试处理 iLink 媒体消息：
 ```text
 WECHAT_IMAGE: /absolute/path/to/image.png
 WECHAT_VOICE: /absolute/path/to/audio.silk playtime_ms=2000
+WECHAT_FILE: /absolute/path/to/report.pdf
 ```
 
 也会自动识别本地 Markdown 图片路径，例如：
@@ -133,6 +134,21 @@ WECHAT_VOICE: /absolute/path/to/audio.silk playtime_ms=2000
 ```
 
 语音发送目前只负责上传并按扩展名设置 encode_type，不做本地音频转码；最稳的是传 `.silk` 文件。
+
+视觉类输出建议：
+
+- 单屏设计方案、UI 对比、状态卡片：优先生成图片并用 `WECHAT_IMAGE` 发回。
+- 多页 diff、review、表格报告：优先 HTML -> PDF，再用 `WECHAT_FILE` 发回。
+
+也可以直接从 CLI 做真实文件发送 smoke：
+
+```bash
+codex-wechat send-file \
+  --state-dir ./.codex-wechat \
+  --file /absolute/path/to/report.pdf \
+  --to last \
+  --message "报告见附件。"
+```
 
 ## 微信命令
 

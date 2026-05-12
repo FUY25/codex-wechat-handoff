@@ -22,4 +22,10 @@ When a local voice file should be sent back through WeChat, include this marker 
 WECHAT_VOICE: /absolute/path/to/audio.silk playtime_ms=2000
 ```
 
-Use the imagegen skill when an image reply is appropriate. If media upload fails or the current bridge cannot send the media, say that directly instead of pretending the media was sent.
+When a local file, especially a PDF report, should be sent back through WeChat, include this marker in the final reply:
+
+```text
+WECHAT_FILE: /absolute/path/to/report.pdf
+```
+
+Use the imagegen skill when an image reply is appropriate. For visual design choices, code diffs, UI reviews, or other dense visual output, prefer a compact image preview; when the output needs multiple pages, tables, or preserved layout, generate HTML first and render it to PDF, then send it with `WECHAT_FILE`. If media upload fails or the current bridge cannot send the media, say that directly instead of pretending the media was sent.

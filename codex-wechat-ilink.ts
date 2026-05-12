@@ -251,10 +251,11 @@ type UploadedFileInfo = {
   aeskey: string;
   fileSize: number;
   fileSizeCiphertext: number;
+  fileMd5: string;
 };
 
 type ReplyMediaDirective = {
-  kind: "image" | "voice";
+  kind: "image" | "voice" | "file";
   path: string;
   playtimeMs?: number;
 };
@@ -1847,6 +1848,7 @@ async function uploadMediaFile(params: {
     aeskey: aeskey.toString("hex"),
     fileSize: rawsize,
     fileSizeCiphertext: filesize,
+    fileMd5: rawfilemd5,
   };
 }
 
@@ -2255,6 +2257,13 @@ export function parseReplyMediaDirectives(reply: string): { text: string; media:
       continue;
     }
 
+    const fileMatch = line.match(/^\s*(?:WECHAT_FILE|微信文件|FILE)\s*:\s*(.+)$/i);
+    if (fileMatch) {
+      const parsed = parseReplyMediaPayload(fileMatch[1]);
+      if (parsed) media.push({ kind: "file", path: parsed.path });
+      continue;
+    }
+
     const rewritten = line.replace(/!\[[^\]]*]\(([^)]+)\)/g, (_match, target: string) => {
       const parsedTarget = target.trim().replace(/^["']|["']$/g, "");
       if (isLocalImagePath(parsedTarget)) {
@@ -2371,6 +2380,52 @@ async function sendVoiceMessage(
   return clientId;
 }
 
+export function buildFileMessageItem(params: { uploaded: UploadedFileInfo; filePath: string }): IlinkItem {
+  return {
+    type: MSG_ITEM_FILE,
+    file_item: {
+      media: {
+        encrypt_query_param: params.uploaded.downloadEncryptedQueryParam,
+        aes_key: mediaAesKeyBase64(params.uploaded.aeskey),
+        encrypt_type: 1,
+      },
+      file_name: sanitizeFileName(path.basename(params.filePath)),
+      md5: params.uploaded.fileMd5,
+      len: String(params.uploaded.fileSize),
+    },
+  };
+}
+
+async function sendFileMessage(account: Account, cdnBaseUrl: string, toUserId: string, filePath: string, contextToken: string): Promise<string> {
+  const uploaded = await uploadMediaFile({
+    account,
+    cdnBaseUrl,
+    toUserId,
+    filePath,
+    mediaType: UPLOAD_MEDIA_FILE,
+  });
+  const clientId = `codex-wechat:${Date.now()}-${randomBytes(4).toString("hex")}`;
+  await apiPost(
+    account.baseUrl,
+    "ilink/bot/sendmessage",
+    account.token,
+    {
+      msg: {
+        from_user_id: "",
+        to_user_id: toUserId,
+        client_id: clientId,
+        message_type: MSG_TYPE_BOT,
+        message_state: MSG_STATE_FINISH,
+        item_list: [buildFileMessageItem({ uploaded, filePath })],
+        context_token: contextToken,
+      },
+      base_info: { channel_version: CHANNEL_VERSION },
+    },
+    15_000,
+  );
+  return clientId;
+}
+
 async function sendReplyMessage(params: {
   account: Account;
   options: RuntimeOptions;
@@ -2394,10 +2449,12 @@ async function sendReplyMessage(params: {
     }
     if (media.kind === "image") {
       clientIds.push(await sendImageMessage(params.account, params.options.cdnBaseUrl, params.toUserId, media.path, params.contextToken));
-    } else {
+    } else if (media.kind === "voice") {
       clientIds.push(
         await sendVoiceMessage(params.account, params.options.cdnBaseUrl, params.toUserId, media.path, params.contextToken, media.playtimeMs),
       );
+    } else {
+      clientIds.push(await sendFileMessage(params.account, params.options.cdnBaseUrl, params.toUserId, media.path, params.contextToken));
     }
   }
   if (!clientIds.length) {
@@ -2667,6 +2724,42 @@ async function commandPullCurrent(options: RuntimeOptions, args: Args): Promise<
   }
 
   console.log(result.delta);
+}
+
+async function commandSendFile(options: RuntimeOptions, args: Args): Promise<void> {
+  const rawFile = optionString(args, "file", args._[1] ?? "");
+  if (!rawFile) throw new Error("send-file 需要 --file PATH。");
+  const filePath = path.isAbsolute(expandHome(rawFile)) ? expandHome(rawFile) : path.resolve(options.workspace, rawFile);
+  if (!existsSync(filePath)) throw new Error(`要发送的文件不存在: ${filePath}`);
+  const toArg = typeof args.to === "string" ? args.to : "last";
+  const message = typeof args.message === "string" ? args.message : "";
+
+  if (options.dryRun) {
+    console.log("dry-run: would send file");
+    console.log(`to: ${toArg}`);
+    console.log(`file: ${filePath}`);
+    if (message) console.log(`message: ${message}`);
+    return;
+  }
+
+  const state = loadBridgeState(options.stateDir);
+  const senderId = resolveTargetSender(state, options.stateDir, toArg);
+  const resolvedContext = resolveProactiveContextToken(options.stateDir, senderId, { allowEmptyFallback: true });
+  if (resolvedContext.contextToken === null) throw new Error(`No context token available for ${senderId}`);
+  const account = loadAccount(options.stateDir);
+  const clientIds: string[] = [];
+  if (message.trim()) {
+    for (const chunk of chunkTextForWechat(message.trim())) {
+      clientIds.push(await sendTextMessage(account, senderId, chunk, resolvedContext.contextToken));
+    }
+  }
+  clientIds.push(await sendFileMessage(account, options.cdnBaseUrl, senderId, filePath, resolvedContext.contextToken));
+  appendBridgeEvent(options.stateDir, {
+    type: "reply_sent",
+    data: { senderId, clientIds, context: "file_notice", contextSource: resolvedContext.source, fileName: path.basename(filePath) },
+  });
+  console.log(`sent: ${filePath}`);
+  console.log(`client_ids: ${clientIds.join(",")}`);
 }
 
 async function commandStart(options: RuntimeOptions): Promise<void> {
@@ -2968,6 +3061,7 @@ Usage:
   codex-wechat carry-current [--project current|NAME] [--to last|SENDER] [--thread-id ID]
   codex-wechat pull-current [--project current|NAME] [--thread-id ID]
   codex-wechat carry-status [--project current|NAME]
+  codex-wechat send-file --file PATH [--to last|SENDER] [--message "..."]
 
 Aliases:
   codex-wechat sessions
@@ -2985,7 +3079,7 @@ Common options:
   --app-server-logs            Print codex app-server stderr logs
   --codex-bin PATH             Default: codex
   --model MODEL                Optional startup-level Codex model default
-  --codex-timeout-ms N         Default: 120000
+  --codex-timeout-ms N         Default: 600000
 
 WeChat commands:
   /projects
@@ -3009,6 +3103,7 @@ WeChat commands:
 Media reply markers:
   WECHAT_IMAGE: /absolute/path/to/image.png
   WECHAT_VOICE: /absolute/path/to/audio.silk playtime_ms=2000
+  WECHAT_FILE: /absolute/path/to/report.pdf
 `);
 }
 
@@ -3033,6 +3128,8 @@ async function main(): Promise<void> {
     await commandCarryCurrent(options, args);
   } else if (command === "pull-current" || command === "pull") {
     await commandPullCurrent(options, args);
+  } else if (command === "send-file") {
+    await commandSendFile(options, args);
   } else if (command === "start") {
     await commandStart(options);
   } else {

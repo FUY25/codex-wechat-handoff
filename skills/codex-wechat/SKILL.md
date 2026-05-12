@@ -1,6 +1,6 @@
 ---
 name: codex-wechat
-description: Use when the user asks to carry the current Codex work to WeChat, pull WeChat work back into Codex Desktop, check WeChat remote status, discover Codex sessions for a project, or manage the local Codex-WeChat bridge.
+description: Use when the user asks to carry the current Codex work to WeChat, pull WeChat work back into Codex Desktop, check WeChat remote status, discover Codex sessions for a project, send files or PDFs through the WeChat bridge, or manage rich Codex-WeChat communication.
 ---
 
 # Codex-WeChat Carry-Over
@@ -39,6 +39,12 @@ Start the always-on listener:
 codex-wechat start --projects /Users/fuyuming/Desktop/wechat-to-codex/projects.local.json
 ```
 
+Send a local PDF or other file to WeChat for a real smoke test:
+
+```bash
+codex-wechat send-file --file /absolute/path/to/report.pdf --to last --message "报告见附件。"
+```
+
 Short aliases also work: `codex-wechat carry`, `codex-wechat pull`, `codex-wechat status`, and `codex-wechat sessions`.
 
 ## Workflow
@@ -69,6 +75,15 @@ codex-wechat discover-sessions --project current
 ```
 
 Then tell them the relevant thread ids. WeChat-side attach is done with `/attach latest`, `/attach <index>`, or `/attach <thread_id>`.
+
+## Rich WeChat Output
+
+When communicating with the user through WeChat, keep normal status replies short. For visual or dense results such as design choices, UI review, code diff review, architecture diagrams, or comparison tables:
+
+- Prefer an image when one screen can explain the result. Use image generation or a local rendered image, then reply with `WECHAT_IMAGE: /absolute/path/to/image.png`.
+- Prefer PDF when the result needs multiple pages, tables, layout, or a durable report. Generate HTML first when useful, render it to PDF, then reply with `WECHAT_FILE: /absolute/path/to/report.pdf`.
+- Send a short text summary before the media so the user can understand what arrived in WeChat notifications.
+- If the user only asked for a quick answer, do not generate media just to be fancy.
 
 ## Safety Defaults
 

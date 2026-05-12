@@ -9,6 +9,7 @@ import {
   buildInboundUserMessageText,
   buildBridgeHealthReport,
   buildCarryBackDelta,
+  buildFileMessageItem,
   parseAesKey,
   buildWechatTurnInput,
   cacheContextToken,
@@ -251,6 +252,7 @@ describe("media helpers", () => {
         "可以，图在下面。",
         "WECHAT_IMAGE: /tmp/out/result.png",
         "WECHAT_VOICE: /tmp/out/reply.silk playtime_ms=2300",
+        "WECHAT_FILE: /tmp/out/report.pdf",
       ].join("\n"),
     );
 
@@ -258,7 +260,36 @@ describe("media helpers", () => {
     expect(result.media).toEqual([
       { kind: "image", path: "/tmp/out/result.png" },
       { kind: "voice", path: "/tmp/out/reply.silk", playtimeMs: 2300 },
+      { kind: "file", path: "/tmp/out/report.pdf" },
     ]);
+  });
+
+  test("builds iLink file message items for uploaded PDFs", () => {
+    const item = buildFileMessageItem({
+      uploaded: {
+        filekey: "file-key",
+        downloadEncryptedQueryParam: "download-param",
+        aeskey: "00112233445566778899aabbccddeeff",
+        fileSize: 12345,
+        fileSizeCiphertext: 12352,
+        fileMd5: "9d2a7b9c3e2f1d41c7d5b3a1a7e1c6f0",
+      },
+      filePath: "/tmp/out/设计 diff report.pdf",
+    });
+
+    expect(item).toEqual({
+      type: 4,
+      file_item: {
+        media: {
+          encrypt_query_param: "download-param",
+          aes_key: "MDAxMTIyMzM0NDU1NjY3Nzg4OTlhYWJiY2NkZGVlZmY=",
+          encrypt_type: 1,
+        },
+        file_name: "设计 diff report.pdf",
+        md5: "9d2a7b9c3e2f1d41c7d5b3a1a7e1c6f0",
+        len: "12345",
+      },
+    });
   });
 
   test("parses local markdown image paths as image directives", () => {
@@ -645,5 +676,34 @@ describe("cli and skill packaging", () => {
     expect(skill).toContain("name: codex-wechat");
     expect(skill).toContain("codex-wechat carry-current");
     expect(skill).toContain("codex-wechat pull-current");
+  });
+
+  test("send-file CLI supports dry-run without account credentials", () => {
+    withTempDir((dir) => {
+      const filePath = path.join(dir, "report.pdf");
+      writeFileSync(filePath, "%PDF-1.4\n% test\n");
+
+      const result = Bun.spawnSync({
+        cmd: [
+          process.execPath,
+          path.join(import.meta.dir, "codex-wechat-ilink.ts"),
+          "send-file",
+          "--state-dir",
+          dir,
+          "--file",
+          filePath,
+          "--to",
+          "user@im.wechat",
+          "--dry-run",
+        ],
+        cwd: import.meta.dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.toString()).toContain("dry-run: would send file");
+      expect(result.stdout.toString()).toContain(filePath);
+    });
   });
 });
