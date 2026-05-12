@@ -10,6 +10,7 @@ import {
   buildBridgeHealthReport,
   buildCarryBackDelta,
   buildFileMessageItem,
+  buildLaunchAgentPlist,
   chooseHtmlRenderer,
   parseAesKey,
   buildWechatTurnInput,
@@ -870,5 +871,24 @@ describe("cli and skill packaging", () => {
       expect(output).toContain("codex:");
       expect(output).toContain("bun:");
     });
+  });
+
+  test("LaunchAgent plist uses caller-provided paths", () => {
+    const plist = buildLaunchAgentPlist({
+      label: "com.codex-wechat-handoff.daemon",
+      bunBin: "/opt/homebrew/bin/bun",
+      scriptPath: "/repo/codex-wechat-ilink.ts",
+      stateDir: "/Users/alice/.codex-wechat-handoff",
+      projectsFile: "/Users/alice/.codex-wechat-handoff/projects.json",
+      codexBin: "/opt/homebrew/bin/codex",
+      workingDirectory: "/repo",
+      logDir: "/Users/alice/.codex-wechat-handoff/logs",
+      homeDir: "/Users/alice",
+    });
+
+    expect(plist).toContain("com.codex-wechat-handoff.daemon");
+    expect(plist).toContain("/Users/alice/.codex-wechat-handoff");
+    expect(plist).toContain("/opt/homebrew/bin/bun");
+    expect(plist).not.toContain("fuyuming");
   });
 });

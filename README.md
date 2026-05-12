@@ -288,7 +288,7 @@ ln -s /Users/fuyuming/Desktop/wechat-to-codex/skills/codex-wechat ~/.codex/skill
 ## 常用参数
 
 ```text
---state-dir PATH             默认 ~/.codex/channels/wechat
+--state-dir PATH             默认 ~/.codex-wechat-handoff
 --cdn-base-url URL           默认 https://novac2c.cdn.weixin.qq.com/c2c
 --workspace PATH             Codex 工作目录，默认当前目录
 --projects PATH              项目路由 JSON
@@ -304,14 +304,33 @@ ln -s /Users/fuyuming/Desktop/wechat-to-codex/skills/codex-wechat ~/.codex/skill
 安装用户级 LaunchAgent，让 bridge 在当前 macOS 用户登录时常驻，并在退出后自动拉起：
 
 ```bash
-scripts/install-launch-agent.sh
+codex-wechat daemon install
 ```
 
-LaunchAgent 默认把 Codex 单轮处理超时设为 10 分钟。超时或异常时，bridge 会尽量把失败原因发回微信，而不是静默卡住。
-
-停止并移除：
+查看状态和最近日志：
 
 ```bash
+codex-wechat daemon status
+codex-wechat daemon logs
+```
+
+LaunchAgent 默认把 Codex 单轮处理超时设为 10 分钟。超时或异常时，bridge 会尽量把失败原因发回微信，而不是静默卡住。需要指定本地项目配置时，把同样的参数交给安装命令：
+
+```bash
+codex-wechat daemon install --projects ./projects.local.json
+```
+
+停止但保留 plist，或停止并移除：
+
+```bash
+codex-wechat daemon stop
+codex-wechat daemon uninstall
+```
+
+旧脚本仍可用，但现在只是这些 CLI 命令的 wrapper：
+
+```bash
+scripts/install-launch-agent.sh
 scripts/uninstall-launch-agent.sh
 ```
 

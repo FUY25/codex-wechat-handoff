@@ -22,6 +22,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:
 const DEFAULT_BASE_URL = "https://ilinkai.weixin.qq.com";
 const DEFAULT_CDN_BASE_URL = "https://novac2c.cdn.weixin.qq.com/c2c";
 const DEFAULT_PRODUCT_STATE_DIR = path.join(os.homedir(), ".codex-wechat-handoff");
+const DAEMON_LABEL = "com.codex-wechat-handoff.daemon";
 const BOT_TYPE = "3";
 const CHANNEL_VERSION = "0.1.0";
 const LONG_POLL_TIMEOUT_MS = 40_000;
@@ -495,6 +496,19 @@ function spawnSyncChecked(command: string, args: string[]): void {
   }
 }
 
+function spawnSyncResult(command: string, args: string[]): { exitCode: number; stdout: string; stderr: string } {
+  const result = Bun.spawnSync({
+    cmd: [command, ...args],
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  return {
+    exitCode: result.exitCode,
+    stdout: result.stdout.toString(),
+    stderr: result.stderr.toString(),
+  };
+}
+
 async function runCommandUntilOutputs(command: string, args: string[], outputs: string[], timeoutMs: number): Promise<void> {
   const proc = Bun.spawn([command, ...args], {
     stdout: "ignore",
@@ -627,6 +641,72 @@ function renderHtmlWithQuickLook(params: {
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
+}
+
+function xmlEscape(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&apos;");
+}
+
+export function buildLaunchAgentPlist(params: {
+  label: string;
+  bunBin: string;
+  scriptPath: string;
+  stateDir: string;
+  projectsFile: string;
+  codexBin: string;
+  workingDirectory: string;
+  logDir: string;
+  homeDir: string;
+}): string {
+  const pathValue = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${xmlEscape(params.label)}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${xmlEscape(params.bunBin)}</string>
+    <string>${xmlEscape(params.scriptPath)}</string>
+    <string>start</string>
+    <string>--state-dir</string>
+    <string>${xmlEscape(params.stateDir)}</string>
+    <string>--projects</string>
+    <string>${xmlEscape(params.projectsFile)}</string>
+    <string>--backend</string>
+    <string>app-server</string>
+    <string>--codex-bin</string>
+    <string>${xmlEscape(params.codexBin)}</string>
+    <string>--codex-timeout-ms</string>
+    <string>600000</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>${xmlEscape(params.workingDirectory)}</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>${xmlEscape(params.homeDir)}</string>
+    <key>PATH</key>
+    <string>${xmlEscape(pathValue)}</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>${xmlEscape(path.join(params.logDir, "launchd.out.log"))}</string>
+  <key>StandardErrorPath</key>
+  <string>${xmlEscape(path.join(params.logDir, "launchd.err.log"))}</string>
+</dict>
+</plist>
+`;
 }
 
 function accountFile(stateDir: string): string {
@@ -2927,17 +3007,135 @@ function doctorAccountStatus(stateDir: string): string {
 
 function doctorDaemonStatus(): string {
   if (process.platform !== "darwin") return "unsupported on this platform";
-  const label = "com.codex-wechat-handoff.daemon";
-  const result = Bun.spawnSync({
-    cmd: ["launchctl", "print", `gui/${process.getuid?.() ?? ""}/${label}`],
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  const result = launchctlPrint(DAEMON_LABEL);
   if (result.exitCode !== 0) return "not installed";
-  const output = result.stdout.toString();
+  const output = result.stdout;
   const state = output.match(/\bstate = ([^\n]+)/)?.[1]?.trim() ?? "unknown";
   const pid = output.match(/\bpid = ([^\n]+)/)?.[1]?.trim();
   return pid ? `${state} (pid ${pid})` : state;
+}
+
+function launchAgentDomain(): string {
+  const uid = process.getuid?.();
+  if (typeof uid !== "number") throw new Error("LaunchAgent daemon commands require a user id.");
+  return `gui/${uid}`;
+}
+
+function launchAgentPlistPath(label = DAEMON_LABEL): string {
+  return path.join(os.homedir(), "Library", "LaunchAgents", `${label}.plist`);
+}
+
+function launchctlPrint(label: string): { exitCode: number; stdout: string; stderr: string } {
+  return spawnSyncResult("launchctl", ["print", `${launchAgentDomain()}/${label}`]);
+}
+
+function bootoutLaunchAgent(label: string, plistPath: string): boolean {
+  const domain = launchAgentDomain();
+  const byPlist = spawnSyncResult("launchctl", ["bootout", domain, plistPath]);
+  if (byPlist.exitCode === 0) return true;
+  const byLabel = spawnSyncResult("launchctl", ["bootout", `${domain}/${label}`]);
+  return byLabel.exitCode === 0;
+}
+
+function parseLaunchAgentStatus(label: string): { loaded: boolean; state: string; pid?: string; raw?: string } {
+  if (process.platform !== "darwin") return { loaded: false, state: "unsupported on this platform" };
+  const result = launchctlPrint(label);
+  if (result.exitCode !== 0) return { loaded: false, state: "not installed" };
+  const state = result.stdout.match(/\bstate = ([^\n]+)/)?.[1]?.trim() ?? "unknown";
+  const pid = result.stdout.match(/\bpid = ([^\n]+)/)?.[1]?.trim();
+  return { loaded: true, state, pid, raw: result.stdout };
+}
+
+function tailTextFile(filePath: string, lines: number): string {
+  if (!existsSync(filePath)) return "(missing)";
+  const content = readFileSync(filePath, "utf-8");
+  const parts = content.split(/\r?\n/);
+  const trimmed = parts.at(-1) === "" ? parts.slice(0, -1) : parts;
+  return trimmed.slice(-lines).join("\n") || "(empty)";
+}
+
+async function commandDaemon(options: RuntimeOptions, args: Args): Promise<void> {
+  const subcommand = args._[1] || "status";
+  const plistPath = launchAgentPlistPath();
+  const logDir = path.join(options.stateDir, "logs");
+
+  if (process.platform !== "darwin") {
+    throw new Error("daemon commands currently support macOS LaunchAgent only.");
+  }
+
+  if (subcommand === "status") {
+    const status = parseLaunchAgentStatus(DAEMON_LABEL);
+    console.log("Codex WeChat Handoff daemon");
+    console.log(`label: ${DAEMON_LABEL}`);
+    console.log(`plist: ${plistPath}`);
+    console.log(`state: ${status.state}`);
+    if (status.pid) console.log(`pid: ${status.pid}`);
+    console.log(`logs: ${logDir}`);
+    return;
+  }
+
+  if (subcommand === "logs") {
+    const lines = optionNumber(args, "lines", 80);
+    const stdoutPath = path.join(logDir, "launchd.out.log");
+    const stderrPath = path.join(logDir, "launchd.err.log");
+    console.log(`==> ${stdoutPath}`);
+    console.log(tailTextFile(stdoutPath, lines));
+    console.log(`==> ${stderrPath}`);
+    console.log(tailTextFile(stderrPath, lines));
+    return;
+  }
+
+  if (subcommand === "install") {
+    const bunBin = process.execPath;
+    const scriptPath = path.resolve(Bun.argv[1] ?? path.join(import.meta.dir, "codex-wechat-ilink.ts"));
+    const codexBin = resolveExecutable(options.codexBin) ?? options.codexBin;
+    const projectsFile = options.projectsFile ?? defaultProjectsFile(options.stateDir);
+    mkdirSync(path.dirname(plistPath), { recursive: true });
+    mkdirSync(logDir, { recursive: true });
+    const plist = buildLaunchAgentPlist({
+      label: DAEMON_LABEL,
+      bunBin,
+      scriptPath,
+      stateDir: options.stateDir,
+      projectsFile,
+      codexBin,
+      workingDirectory: path.dirname(scriptPath),
+      logDir,
+      homeDir: os.homedir(),
+    });
+    writeFileSync(plistPath, plist, "utf-8");
+    spawnSyncChecked("plutil", ["-lint", plistPath]);
+    if (parseLaunchAgentStatus(DAEMON_LABEL).loaded) {
+      bootoutLaunchAgent(DAEMON_LABEL, plistPath);
+    }
+    const domain = launchAgentDomain();
+    spawnSyncChecked("launchctl", ["bootstrap", domain, plistPath]);
+    spawnSyncChecked("launchctl", ["enable", `${domain}/${DAEMON_LABEL}`]);
+    spawnSyncChecked("launchctl", ["kickstart", "-k", `${domain}/${DAEMON_LABEL}`]);
+    const status = parseLaunchAgentStatus(DAEMON_LABEL);
+    console.log(`installed: ${plistPath}`);
+    console.log(`state: ${status.pid ? `${status.state} (pid ${status.pid})` : status.state}`);
+    console.log(`logs: ${logDir}`);
+    console.log("Next: codex-wechat daemon status");
+    return;
+  }
+
+  if (subcommand === "stop") {
+    const stopped = bootoutLaunchAgent(DAEMON_LABEL, plistPath);
+    console.log(stopped ? `stopped: ${DAEMON_LABEL}` : `not running: ${DAEMON_LABEL}`);
+    console.log(`plist left in place: ${plistPath}`);
+    return;
+  }
+
+  if (subcommand === "uninstall") {
+    bootoutLaunchAgent(DAEMON_LABEL, plistPath);
+    rmSync(plistPath, { force: true });
+    console.log(`uninstalled: ${DAEMON_LABEL}`);
+    console.log(`removed: ${plistPath}`);
+    return;
+  }
+
+  throw new Error(`Unknown daemon command: ${subcommand}. Use install, status, logs, stop, or uninstall.`);
 }
 
 async function commandDoctor(options: RuntimeOptions): Promise<void> {
@@ -3551,6 +3749,7 @@ Usage:
   codex-wechat qr [--state-dir PATH]
   codex-wechat setup [--force] [--state-dir PATH]
   codex-wechat start [--workspace PATH] [--dry-run]
+  codex-wechat daemon install|status|logs|stop|uninstall
   codex-wechat ask --message "..." [--mock-reply "..."]
   codex-wechat discover-sessions [--project current|NAME]
   codex-wechat carry-current [--project current|NAME] [--to last|SENDER] [--thread-id ID]
@@ -3578,6 +3777,7 @@ Common options:
   --model MODEL                Optional startup-level Codex model default
   --codex-timeout-ms N         Default: 600000
   --render-timeout-ms N        Default: 30000
+  --lines N                    daemon logs line count, default: 80
 
 WeChat commands:
   /projects
@@ -3616,6 +3816,8 @@ async function main(): Promise<void> {
     await commandInit(options, args);
   } else if (command === "doctor") {
     await commandDoctor(options);
+  } else if (command === "daemon") {
+    await commandDaemon(options, args);
   } else if (command === "qr") {
     await commandQR(options);
   } else if (command === "setup") {
