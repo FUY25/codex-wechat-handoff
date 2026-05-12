@@ -66,6 +66,13 @@ bun codex-wechat-ilink.ts setup --state-dir ./.codex-wechat
 
 ## 项目配置
 
+新用户可以先生成本地配置：
+
+```bash
+codex-wechat init --project my-project --cwd /absolute/path/to/my-project
+codex-wechat doctor
+```
+
 复制示例配置，填入你的项目和 sender 白名单：
 
 ```bash

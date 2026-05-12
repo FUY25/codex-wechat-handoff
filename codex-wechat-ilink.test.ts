@@ -818,4 +818,57 @@ describe("cli and skill packaging", () => {
       expect(result.stdout.toString()).toContain(pngPath);
     });
   });
+
+  test("init creates a safe local projects config", () => {
+    withTempDir((dir) => {
+      const result = Bun.spawnSync({
+        cmd: [
+          process.execPath,
+          path.join(import.meta.dir, "codex-wechat-ilink.ts"),
+          "init",
+          "--state-dir",
+          dir,
+          "--project",
+          "demo",
+          "--cwd",
+          dir,
+        ],
+        cwd: import.meta.dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      expect(result.exitCode).toBe(0);
+      const config = JSON.parse(readFileSync(path.join(dir, "projects.json"), "utf-8"));
+      expect(config.defaultProject).toBe("demo");
+      expect(config.allowedSenderIds).toEqual([]);
+      expect(config.projects.demo.defaultMode).toBe("read");
+      expect(config.projects.demo.cwd).toBe(dir);
+      expect(result.stdout.toString()).toContain("Next: codex-wechat setup");
+    });
+  });
+
+  test("doctor reports missing account and project config", () => {
+    withTempDir((dir) => {
+      const result = Bun.spawnSync({
+        cmd: [
+          process.execPath,
+          path.join(import.meta.dir, "codex-wechat-ilink.ts"),
+          "doctor",
+          "--state-dir",
+          dir,
+        ],
+        cwd: import.meta.dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      expect(result.exitCode).toBe(0);
+      const output = result.stdout.toString();
+      expect(output).toContain("account: missing");
+      expect(output).toContain("projects: missing");
+      expect(output).toContain("codex:");
+      expect(output).toContain("bun:");
+    });
+  });
 });

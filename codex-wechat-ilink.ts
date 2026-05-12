@@ -21,6 +21,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:
 
 const DEFAULT_BASE_URL = "https://ilinkai.weixin.qq.com";
 const DEFAULT_CDN_BASE_URL = "https://novac2c.cdn.weixin.qq.com/c2c";
+const DEFAULT_PRODUCT_STATE_DIR = path.join(os.homedir(), ".codex-wechat-handoff");
 const BOT_TYPE = "3";
 const CHANNEL_VERSION = "0.1.0";
 const LONG_POLL_TIMEOUT_MS = 40_000;
@@ -355,14 +356,22 @@ function optionNumber(args: Args, key: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function defaultProjectsFile(stateDir: string): string {
+  return path.join(stateDir, "projects.json");
+}
+
+function resolveDefaultStateDir(args: Args): string {
+  return path.resolve(expandHome(optionString(args, "state-dir", DEFAULT_PRODUCT_STATE_DIR)));
+}
+
 function runtimeOptions(args: Args): RuntimeOptions {
-  const defaultStateDir = path.join(os.homedir(), ".codex", "channels", "wechat");
+  const stateDir = resolveDefaultStateDir(args);
   return {
-    stateDir: path.resolve(expandHome(optionString(args, "state-dir", defaultStateDir))),
+    stateDir,
     baseUrl: optionString(args, "base-url", DEFAULT_BASE_URL),
     cdnBaseUrl: optionString(args, "cdn-base-url", DEFAULT_CDN_BASE_URL),
     workspace: path.resolve(expandHome(optionString(args, "workspace", process.cwd()))),
-    projectsFile: typeof args.projects === "string" ? path.resolve(expandHome(args.projects)) : undefined,
+    projectsFile: typeof args.projects === "string" ? path.resolve(expandHome(args.projects)) : defaultProjectsFile(stateDir),
     backend: optionString(args, "backend", "app-server") === "exec" ? "exec" : "app-server",
     appServerLogs: Boolean(args["app-server-logs"]),
     codexBin: optionString(args, "codex-bin", "codex"),
@@ -1280,6 +1289,7 @@ export function loadProjectRegistry(params: { workspace: string; projectsConfig?
 
 function loadProjectsConfig(file?: string): ProjectsConfig | undefined {
   if (!file) return undefined;
+  if (!existsSync(file)) return undefined;
   return JSON.parse(readFileSync(file, "utf-8")) as ProjectsConfig;
 }
 
@@ -2840,6 +2850,127 @@ async function commandAsk(options: RuntimeOptions, args: Args): Promise<void> {
   console.log(reply);
 }
 
+async function commandInit(options: RuntimeOptions, args: Args): Promise<void> {
+  const projectName = optionString(args, "project", "default");
+  const cwd = path.resolve(expandHome(optionString(args, "cwd", process.cwd())));
+  const projectsPath = typeof args.projects === "string" ? path.resolve(expandHome(args.projects)) : defaultProjectsFile(options.stateDir);
+  mkdirSync(path.dirname(projectsPath), { recursive: true });
+  const config: ProjectsConfig = {
+    defaultProject: projectName,
+    allowedSenderIds: [],
+    projects: {
+      [projectName]: {
+        cwd,
+        defaultMode: "read",
+      },
+    },
+  };
+  writeFileSync(projectsPath, JSON.stringify(config, null, 2), "utf-8");
+  try {
+    chmodSync(projectsPath, 0o600);
+  } catch {
+    // Best effort only.
+  }
+  console.log(`created: ${projectsPath}`);
+  console.log("Next: codex-wechat setup");
+  console.log("Then: codex-wechat doctor");
+  console.log("Then: codex-wechat daemon install");
+}
+
+function resolveExecutable(command: string): string | null {
+  const expanded = expandHome(command);
+  if (expanded.includes("/") && isExecutablePath(expanded)) return expanded;
+  return findCommandOnPath(expanded);
+}
+
+function commandVersion(command: string, args: string[] = ["--version"]): string {
+  const executable = resolveExecutable(command);
+  if (!executable) return "missing";
+  const result = Bun.spawnSync({
+    cmd: [executable, ...args],
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const output = (result.stdout.toString() || result.stderr.toString()).trim().split(/\r?\n/)[0] ?? "";
+  return result.exitCode === 0 ? output || "ok" : `error (${result.exitCode})`;
+}
+
+function doctorProjectsStatus(options: RuntimeOptions): string {
+  const projectsFile = options.projectsFile ?? defaultProjectsFile(options.stateDir);
+  if (!existsSync(projectsFile)) return `missing (${projectsFile})`;
+  try {
+    const projects = loadProjectRegistry({
+      workspace: options.workspace,
+      projectsConfig: loadProjectsConfig(projectsFile),
+    });
+    const missingProjects = Object.entries(projects.projects)
+      .filter(([, project]) => !existsSync(project.cwd))
+      .map(([name]) => name);
+    if (missingProjects.length) return `ok, missing cwd: ${missingProjects.join(", ")}`;
+    return `ok (${Object.keys(projects.projects).length} project${Object.keys(projects.projects).length === 1 ? "" : "s"})`;
+  } catch (error) {
+    return `invalid (${error instanceof Error ? error.message : String(error)})`;
+  }
+}
+
+function doctorAccountStatus(stateDir: string): string {
+  const file = accountFile(stateDir);
+  if (!existsSync(file)) return "missing";
+  try {
+    const mode = (statSync(file).mode & 0o777).toString(8);
+    const account = JSON.parse(readFileSync(file, "utf-8")) as Account;
+    return account.token && account.baseUrl ? `ok (${mode})` : `invalid (${mode})`;
+  } catch (error) {
+    return `invalid (${error instanceof Error ? error.message : String(error)})`;
+  }
+}
+
+function doctorDaemonStatus(): string {
+  if (process.platform !== "darwin") return "unsupported on this platform";
+  const label = "com.codex-wechat-handoff.daemon";
+  const result = Bun.spawnSync({
+    cmd: ["launchctl", "print", `gui/${process.getuid?.() ?? ""}/${label}`],
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (result.exitCode !== 0) return "not installed";
+  const output = result.stdout.toString();
+  const state = output.match(/\bstate = ([^\n]+)/)?.[1]?.trim() ?? "unknown";
+  const pid = output.match(/\bpid = ([^\n]+)/)?.[1]?.trim();
+  return pid ? `${state} (pid ${pid})` : state;
+}
+
+async function commandDoctor(options: RuntimeOptions): Promise<void> {
+  const stateDirWritable = (() => {
+    try {
+      mkdirSync(options.stateDir, { recursive: true });
+      const probe = path.join(options.stateDir, `.doctor-${process.pid}.tmp`);
+      writeFileSync(probe, "ok", "utf-8");
+      rmSync(probe, { force: true });
+      return "ok";
+    } catch (error) {
+      return `error (${error instanceof Error ? error.message : String(error)})`;
+    }
+  })();
+  const chrome = findChromeExecutable();
+  const qlmanage = findMacTool("qlmanage");
+  const sips = findMacTool("sips");
+  const lines = [
+    "Codex WeChat Handoff doctor",
+    `state_dir: ${options.stateDir}`,
+    `state_dir_writable: ${stateDirWritable}`,
+    `bun: ${Bun.version}`,
+    `codex: ${commandVersion(options.codexBin)}`,
+    `account: ${doctorAccountStatus(options.stateDir)}`,
+    `projects: ${doctorProjectsStatus(options)}`,
+    `daemon: ${doctorDaemonStatus()}`,
+    `renderer_chrome: ${chrome ? `ok (${chrome})` : "missing"}`,
+    `renderer_quicklook: ${qlmanage ? `ok (${qlmanage})` : "missing"}`,
+    `renderer_sips: ${sips ? `ok (${sips})` : "missing"}`,
+  ];
+  console.log(lines.join("\n"));
+}
+
 async function commandDiscoverSessions(options: RuntimeOptions, args: Args): Promise<void> {
   const projects = loadProjectRegistry({
     workspace: options.workspace,
@@ -3412,9 +3543,11 @@ async function commandStart(options: RuntimeOptions): Promise<void> {
 }
 
 function printHelp(): void {
-  console.log(`Codex WeChat iLink demo
+  console.log(`Codex WeChat Handoff
 
 Usage:
+  codex-wechat init [--project NAME] [--cwd PATH]
+  codex-wechat doctor
   codex-wechat qr [--state-dir PATH]
   codex-wechat setup [--force] [--state-dir PATH]
   codex-wechat start [--workspace PATH] [--dry-run]
@@ -3434,7 +3567,7 @@ Aliases:
   codex-wechat status
 
 Common options:
-  --state-dir PATH             Default: ~/.codex/channels/wechat
+  --state-dir PATH             Default: ~/.codex-wechat-handoff
   --base-url URL               Default: ${DEFAULT_BASE_URL}
   --cdn-base-url URL           Default: ${DEFAULT_CDN_BASE_URL}
   --workspace PATH             Codex working directory, default: current directory
@@ -3479,6 +3612,10 @@ async function main(): Promise<void> {
 
   if (command === "help" || command === "--help" || command === "-h") {
     printHelp();
+  } else if (command === "init") {
+    await commandInit(options, args);
+  } else if (command === "doctor") {
+    await commandDoctor(options);
   } else if (command === "qr") {
     await commandQR(options);
   } else if (command === "setup") {
