@@ -440,15 +440,15 @@ Do not split it only for aesthetics before the public install path works.
       label: "com.codex-wechat-handoff.daemon",
       bunBin: "/opt/homebrew/bin/bun",
       scriptPath: "/repo/codex-wechat-ilink.ts",
-      stateDir: "/Users/alice/.codex-wechat-handoff",
-      projectsFile: "/Users/alice/.codex-wechat-handoff/projects.json",
+      stateDir: "/home/alice/.codex-wechat-handoff",
+      projectsFile: "/home/alice/.codex-wechat-handoff/projects.json",
       codexBin: "/opt/homebrew/bin/codex",
       workingDirectory: "/repo",
-      logDir: "/Users/alice/.codex-wechat-handoff/logs",
+      logDir: "/home/alice/.codex-wechat-handoff/logs",
     });
 
     expect(plist).toContain("com.codex-wechat-handoff.daemon");
-    expect(plist).toContain("/Users/alice/.codex-wechat-handoff");
+    expect(plist).toContain("/home/alice/.codex-wechat-handoff");
     expect(plist).not.toContain("local-user");
   });
   ```
@@ -898,7 +898,7 @@ Do not split it only for aesthetics before the public install path works.
 
   ```bash
   git ls-files | rg 'account.json|context_tokens|sync_buf|sessions.json|events.jsonl|projects.local.json' && exit 1 || true
-  rg -n "local-user|/Users/|bot_token|Bearer|account.json" .
+  rg -n "local-user|absolute-home-path|bot_token|Bearer|account.json" .
   bun test codex-wechat-ilink.test.ts
   ```
 

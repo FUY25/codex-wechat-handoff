@@ -59,12 +59,12 @@ const projects = loadProjectRegistry({
     defaultProject: "vibelight",
     projects: {
       vibelight: {
-        cwd: "/Users/fuyuming/Desktop/project/vibelight",
+        cwd: "/workspace/vibelight",
         defaultMode: "read",
         model: "gpt-5.4-mini",
       },
       marklab: {
-        cwd: "/Users/fuyuming/Desktop/markdown_ai_collab_milkdown_spec",
+        cwd: "/workspace/marklab",
         defaultMode: "write",
       },
     },
@@ -140,7 +140,7 @@ describe("bridge state commands", () => {
     expect(result.reply).toContain("mode: read");
     expect(result.reply).toContain("model: gpt-5.4-mini");
     expect(result.reply).toContain("thread: none");
-    expect(result.reply).toContain("/Users/fuyuming/Desktop/project/vibelight");
+    expect(result.reply).toContain("/workspace/vibelight");
   });
 
   test("new clears only the current project thread", () => {
@@ -151,12 +151,12 @@ describe("bridge state commands", () => {
       sessions: {
         vibelight: {
           threadId: "thread-vibelight",
-          cwd: "/Users/fuyuming/Desktop/project/vibelight",
+          cwd: "/workspace/vibelight",
           mode: "write",
         },
         marklab: {
           threadId: "thread-marklab",
-          cwd: "/Users/fuyuming/Desktop/markdown_ai_collab_milkdown_spec",
+          cwd: "/workspace/marklab",
           mode: "read",
         },
       },
@@ -516,7 +516,7 @@ describe("stage 1-6 carry-over plan", () => {
 
   test("resolves project by explicit name or matching cwd", () => {
     expect(resolveProjectName(projects, { requestedProject: "marklab", cwd: "/tmp/elsewhere" })).toBe("marklab");
-    expect(resolveProjectName(projects, { requestedProject: "current", cwd: "/Users/fuyuming/Desktop/project/vibelight/subdir" })).toBe("vibelight");
+    expect(resolveProjectName(projects, { requestedProject: "current", cwd: "/workspace/vibelight/subdir" })).toBe("vibelight");
     expect(() => resolveProjectName(projects, { requestedProject: "missing", cwd: "/tmp" })).toThrow("Unknown project");
   });
 
@@ -565,7 +565,7 @@ describe("stage 1-6 carry-over plan", () => {
       sessions: {
         vibelight: {
           threadId: "wechat-thread",
-          cwd: "/Users/fuyuming/Desktop/project/vibelight",
+          cwd: "/workspace/vibelight",
           mode: "write",
         },
       },
@@ -881,18 +881,18 @@ describe("cli and skill packaging", () => {
       label: "com.codex-wechat-handoff.daemon",
       bunBin: "/opt/homebrew/bin/bun",
       scriptPath: "/repo/codex-wechat-ilink.ts",
-      stateDir: "/Users/alice/.codex-wechat-handoff",
-      projectsFile: "/Users/alice/.codex-wechat-handoff/projects.json",
+      stateDir: "/home/alice/.codex-wechat-handoff",
+      projectsFile: "/home/alice/.codex-wechat-handoff/projects.json",
       codexBin: "/opt/homebrew/bin/codex",
       workingDirectory: "/repo",
-      logDir: "/Users/alice/.codex-wechat-handoff/logs",
-      homeDir: "/Users/alice",
+      logDir: "/home/alice/.codex-wechat-handoff/logs",
+      homeDir: "/home/alice",
     });
 
     expect(plist).toContain("com.codex-wechat-handoff.daemon");
-    expect(plist).toContain("/Users/alice/.codex-wechat-handoff");
+    expect(plist).toContain("/home/alice/.codex-wechat-handoff");
     expect(plist).toContain("/opt/homebrew/bin/bun");
-    expect(plist).not.toContain("fuyuming");
+    expect(plist).not.toContain("local-user");
   });
 
   test("onboarding starts with carry-over before generic commands", () => {
