@@ -22,16 +22,17 @@ Ask the user for:
 Run:
 
 1. `codex-wechat init --project <name> --cwd <absolute-project-path>`
-2. `codex-wechat setup`
-3. `codex-wechat doctor`
-4. `codex-wechat daemon install`
-5. `codex-wechat carry-current --project current --to last` only from an active Codex thread
-6. Ask the user to send `/status` in WeChat
+2. Add any additional allowed projects with `codex-wechat project add <name> --cwd <absolute-project-path> --mode read`
+3. `codex-wechat setup`
+4. `codex-wechat doctor`
+5. `codex-wechat daemon install`
+6. `codex-wechat carry-current --project current --to last` only from an active Codex thread
+7. Ask the user to send `/projects`, `/project <name>`, and `/status` in WeChat
 
 First WeChat onboarding message should start with carry-over:
 
 ```text
-To continue this Desktop Codex session on your phone, run `codex-wechat carry-current --project current --to last` from Codex Desktop. When you return, run `codex-wechat pull-current --project current`.
+To continue this Desktop Codex session on your phone, tell Codex: carry this to WeChat. When you return, tell Codex: pull WeChat back. CLI fallback: `codex-wechat carry` and `codex-wechat pull`.
 ```
 
 ## Safety Rules
@@ -41,6 +42,8 @@ To continue this Desktop Codex session on your phone, run `codex-wechat carry-cu
 - Keep sender access explicit. Do not configure a public install to respond to every WeChat sender.
 - Do not start a second daemon if `codex-wechat daemon status` shows one already running for the same state directory.
 - Use `codex-wechat doctor` after setup and after daemon install.
+- Explain that `/project <name>` switches to that project's own mobile session and Codex thread; it does not mutate one thread's cwd.
+- Match the user's interaction language when explaining commands. Use Chinese for Chinese onboarding and English for English onboarding.
 
 ## Troubleshooting Flow
 

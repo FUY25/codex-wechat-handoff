@@ -5,11 +5,13 @@ import { describe, expect, test } from "bun:test";
 import {
   acquireBridgeLock,
   applyBridgeCommand,
+  applyBridgeCommandToFreshState,
   appendBridgeEvent,
   buildInboundUserMessageText,
   buildBridgeHealthReport,
   buildCarryBackDelta,
   buildFileMessageItem,
+  buildIntroMessage,
   buildLaunchAgentPlist,
   buildOnboardingMessage,
   chooseHtmlRenderer,
@@ -75,13 +77,20 @@ describe("bridge command parser", () => {
   test("parses slash commands and treats regular text as a user message", () => {
     expect(parseBridgeCommand("/project vibelight")).toEqual({ type: "project", project: "vibelight" });
     expect(parseBridgeCommand("/mode bypass")).toEqual({ type: "mode", mode: "bypass" });
+    expect(parseBridgeCommand("/model bypass")).toEqual({
+      type: "error",
+      message: "bypass is a permission mode. Use /mode bypass, not /model bypass.",
+    });
     expect(parseBridgeCommand("/model gpt-5.2")).toEqual({ type: "model", model: "gpt-5.2" });
     expect(parseBridgeCommand("/model default")).toEqual({ type: "model", model: null });
     expect(parseBridgeCommand("/model")).toEqual({ type: "modelStatus" });
     expect(parseBridgeCommand("/new")).toEqual({ type: "new" });
     expect(parseBridgeCommand("/status")).toEqual({ type: "status" });
     expect(parseBridgeCommand("/onboarding")).toEqual({ type: "onboarding" });
-    expect(parseBridgeCommand("/intro")).toEqual({ type: "onboarding" });
+    expect(parseBridgeCommand("/intro")).toEqual({ type: "intro" });
+    expect(parseBridgeCommand("回电脑继续")).toEqual({ type: "back" });
+    expect(parseBridgeCommand("继续手机 remote")).toEqual({ type: "resume" });
+    expect(parseBridgeCommand("退出 carry-over")).toEqual({ type: "detach" });
     expect(parseBridgeCommand("帮我看一下 README")).toEqual({ type: "message", text: "帮我看一下 README" });
   });
 
@@ -93,6 +102,10 @@ describe("bridge command parser", () => {
     expect(parseBridgeCommand("/deploy")).toEqual({
       type: "error",
       message: "Unknown command: /deploy",
+    });
+    expect(parseBridgeCommand("/onboardinv")).toEqual({
+      type: "error",
+      message: "Unknown command: /onboardinv. Did you mean /onboarding?",
     });
     expect(parseBridgeCommand("/model gpt 5")).toEqual({
       type: "error",
@@ -580,6 +593,9 @@ describe("stage 1-6 carry-over plan", () => {
 
     expect(result.notification).toContain("continue from here");
     expect(result.notification).toContain("desktop-thread");
+    expect(result.notification).toContain("project: vibelight");
+    expect(result.notification).toContain("mode: write");
+    expect(result.notification).toContain("model: gpt-5.4-mini");
     expect(state.senders["sender-a"].routes?.vibelight).toMatchObject({
       attachedThreadId: "desktop-thread",
       leaseState: "wechat_active",
@@ -604,11 +620,15 @@ describe("stage 1-6 carry-over plan", () => {
       threadId: "desktop-thread",
       projectName: "vibelight",
       events,
+      projects,
       now: "2026-05-12T12:03:00.000Z",
     });
 
     expect(result.delta).toContain("检查 release");
     expect(result.notification).toContain("已切回电脑继续");
+    expect(result.notification).toContain("project: vibelight");
+    expect(result.notification).toContain("mode: read");
+    expect(result.notification).toContain("model: gpt-5.4-mini");
     expect(state.senders["sender-a"].routes?.vibelight.leaseState).toBe("desktop_active");
   });
 
@@ -652,6 +672,53 @@ describe("stage 1-6 carry-over plan", () => {
     expect(state.senders["sender-a"].routes?.vibelight).toBeUndefined();
   });
 
+  test("new is blocked while a Desktop carry-over route is active", () => {
+    const state = createBridgeState();
+    carryCurrentToWeChat(state, projects, {
+      senderId: "sender-a",
+      projectName: "vibelight",
+      threadId: "desktop-thread",
+      now: "2026-05-12T12:00:00.000Z",
+    });
+
+    const result = applyBridgeCommand(state, projects, "sender-a", { type: "new" });
+
+    expect(result.reply).toContain("当前正在 Desktop carry-over");
+    expect(state.senders["sender-a"].routes?.vibelight.attachedThreadId).toBe("desktop-thread");
+  });
+
+  test("listener command saves reload fresh disk state and preserve external carry routes", () =>
+    withTempDir((dir) => {
+      const diskState = createBridgeState();
+      diskState.senders["sender-a"] = {
+        activeProject: "vibelight",
+        activeMode: "write",
+        sessions: {
+          vibelight: {
+            threadId: "wechat-thread",
+            cwd: "/workspace/vibelight",
+            mode: "write",
+          },
+        },
+      };
+      carryCurrentToWeChat(diskState, projects, {
+        senderId: "sender-a",
+        projectName: "vibelight",
+        threadId: "desktop-thread",
+        now: "2026-05-12T12:00:00.000Z",
+        mode: "read",
+      });
+      writeFileSync(path.join(dir, "sessions.json"), JSON.stringify(diskState, null, 2));
+
+      const result = applyBridgeCommandToFreshState(dir, projects, "sender-a", { type: "mode", mode: "read" });
+      const saved = JSON.parse(readFileSync(path.join(dir, "sessions.json"), "utf-8"));
+
+      expect(result.reply).toBe("mode: read");
+      expect(saved.senders["sender-a"].routes.vibelight.attachedThreadId).toBe("desktop-thread");
+      expect(saved.senders["sender-a"].routes.vibelight.leaseState).toBe("wechat_active");
+      expect(saved.senders["sender-a"].activeMode).toBe("read");
+    }));
+
   test("builds a carry-back delta from event logs", () => {
     const delta = buildCarryBackDelta(
       [
@@ -688,7 +755,8 @@ describe("cli and skill packaging", () => {
 
     expect(skill).toContain("name: codex-wechat");
     expect(skill).toContain("codex-wechat carry-current");
-    expect(skill).toContain("codex-wechat pull-current");
+    expect(skill).toContain("codex-wechat pull --project current");
+    expect(skill).toContain("codex-wechat project add");
   });
 
   test("send-file CLI supports dry-run without account credentials", () => {
@@ -899,6 +967,57 @@ describe("cli and skill packaging", () => {
     const text = buildOnboardingMessage();
     expect(text.indexOf("核心用法")).toBeLessThan(text.indexOf("其他常用命令"));
     expect(text).toContain("codex-wechat carry-current");
-    expect(text).toContain("codex-wechat pull-current");
+    expect(text).toContain("pull WeChat back");
+    expect(text).toContain("codex-wechat pull");
+    expect(text).toContain("/new");
+    expect(text).toContain("/stop");
+    expect(text).toContain("compact");
+  });
+
+  test("intro is shorter than full onboarding and points to onboarding for details", () => {
+    const intro = buildIntroMessage();
+    const onboarding = buildOnboardingMessage();
+
+    expect(intro.length).toBeLessThan(onboarding.length);
+    expect(intro).toContain("pull WeChat back");
+    expect(intro).toContain("/onboarding");
+  });
+
+  test("project add CLI creates a safe project config entry", () => {
+    withTempDir((dir) => {
+      const projectDir = path.join(dir, "demo-project");
+      mkdirSync(projectDir, { recursive: true });
+      const result = Bun.spawnSync({
+        cmd: [
+          process.execPath,
+          path.join(import.meta.dir, "codex-wechat-ilink.ts"),
+          "project",
+          "add",
+          "demo",
+          "--state-dir",
+          dir,
+          "--cwd",
+          projectDir,
+        ],
+        cwd: import.meta.dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      expect(result.exitCode).toBe(0);
+      const config = JSON.parse(readFileSync(path.join(dir, "projects.json"), "utf-8"));
+      expect(config.defaultProject).toBe("demo");
+      expect(config.projects.demo.cwd).toBe(projectDir);
+      expect(config.projects.demo.defaultMode).toBe("read");
+      expect(result.stdout.toString()).toContain("/project demo");
+    });
+  });
+
+  test("onboarding explains project switching as per-project sessions in both languages", () => {
+    const text = buildOnboardingMessage();
+
+    expect(text).toContain("每个 project 有自己的手机 session / Codex thread");
+    expect(text).toContain("Each project has its own mobile session and Codex thread");
+    expect(text).toContain("/project <name>");
   });
 });

@@ -321,8 +321,9 @@ report.png 31K
 ## Known Caveats
 
 - The repository is still private.
-- Runtime listener must merge or reload route state when external CLI commands update `sessions.json`.
-- `/intro` currently duplicates `/onboarding`; make one concise or document it as a pure alias.
-- Carry-back wording should say "tell Codex to pull WeChat back" first, with CLI as fallback.
-- Add AI-assisted project setup so users can expose allowed projects without hand-editing JSON.
-- Add fuzzy command suggestions and natural-language intent handling for typo-prone mobile input.
+- Runtime listener state merge has been fixed in code and unit tests. Rerun real E2E with the listener already running during `carry-current`.
+- `/intro` is now a shorter intro and `/onboarding` is the full guide.
+- Carry-back wording now says "tell Codex to pull WeChat back" first, with CLI as fallback.
+- AI-assisted project setup is available through `codex-wechat project add <name> --cwd <path> --mode read`.
+- Fuzzy command suggestions and common handoff natural-language intents are implemented.
+- `/stop` still does not interrupt an active turn safely; it reports current limitation.

@@ -43,10 +43,16 @@ continue from here
 
 After that, replies from WeChat continue the same Codex thread. The active project, mode, and thread id are tracked per WeChat sender.
 
-When you return to the computer:
+When you return to the computer, tell Codex:
+
+```text
+pull WeChat back
+```
+
+CLI fallback:
 
 ```bash
-codex-wechat pull-current --project current
+codex-wechat pull --project current
 ```
 
 The CLI prints a `Mobile continuation:` delta for the current Desktop chat and tells WeChat that the session moved back to Desktop.
@@ -72,10 +78,10 @@ There is no public callback URL and no WebSocket server to expose. The local dae
 ## WeChat Commands
 
 ```text
-/onboarding            show carry-over-first intro
-/intro                 alias for /onboarding
+/intro                 short carry-over intro
+/onboarding            full carry-over, project, and command guide
 /projects              list configured projects
-/project <name>        switch active project
+/project <name>        switch to that project's own mobile session/thread
 /mode read             read-only Codex mode
 /mode write            workspace-write mode for the project cwd
 /mode bypass           danger-full-access mode
@@ -92,11 +98,16 @@ There is no public callback URL and no WebSocket server to expose. The local dae
 /resume                resume phone remote mode
 /detach                exit Desktop carry-over and return to prior WeChat session
 /history [n]           show recent history entry point
-/new                   start a new Codex thread for the current project
+/new                   start a new phone-side Codex thread for current project
+/stop                  show current stop/interrupt status
 /help                  list commands
 ```
 
 Default permission mode is `read`. Use `/mode write` only for projects you want Codex to edit. Use `/mode bypass` only when you intentionally want full local access from WeChat.
+
+`/project <name>` does not move one existing Codex thread to a different folder. It changes the active project for that WeChat sender. Each project has its own mobile session and Codex thread. Desktop carry-over is a temporary attachment of the current Desktop thread on top of that per-project mobile session.
+
+If a long-running Codex thread exceeds the model context window, Codex may compact or summarize internally. The bridge continues routing to the same thread id; compaction behavior belongs to Codex itself.
 
 ## Project Config
 
@@ -104,6 +115,21 @@ Create a safe local config:
 
 ```bash
 codex-wechat init --project my-project --cwd /absolute/path/to/my-project
+```
+
+Add another allowed project without hand-editing JSON:
+
+```bash
+codex-wechat project add vibelight --cwd /absolute/path/to/vibelight --mode read
+codex-wechat doctor
+```
+
+Then from WeChat:
+
+```text
+/projects
+/project vibelight
+/status
 ```
 
 Or start from the example:

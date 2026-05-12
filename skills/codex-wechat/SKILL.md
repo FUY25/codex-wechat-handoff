@@ -29,7 +29,7 @@ codex-wechat carry-current --project current --to last
 Pull the WeChat continuation back into the current Desktop thread:
 
 ```bash
-codex-wechat pull-current --project current
+codex-wechat pull --project current
 ```
 
 Show bridge/carry state:
@@ -76,7 +76,7 @@ When the user says "carry this to WeChat", "continue on phone", or similar:
 
 When the user says "/wechat pull", "pull WeChat back", "continue from Desktop", or similar:
 
-1. Run `codex-wechat pull-current --project current`.
+1. Run `codex-wechat pull --project current`.
 2. Treat the printed `Mobile continuation:` section as context for the current Desktop thread.
 3. Continue from that delta naturally in the current conversation.
 
@@ -94,7 +94,16 @@ codex-wechat discover-sessions --project current
 
 Then tell them the relevant thread ids. WeChat-side attach is done with `/attach latest`, `/attach <index>`, or `/attach <thread_id>`.
 
-When the user wants the WeChat-side introduction again, tell them to send `/onboarding` or `/intro`; the response starts with carry-over before project and mode commands.
+When the user wants the WeChat-side introduction again, tell them to send `/intro` for the short version or `/onboarding` for the full carry-over and project/session explanation.
+
+When the user wants another folder available from WeChat, add it as an allowed project:
+
+```bash
+codex-wechat project add <name> --cwd /absolute/path/to/project --mode read
+codex-wechat doctor
+```
+
+Then tell them to use `/projects`, `/project <name>`, and `/status` on mobile. Explain that `/project <name>` switches to that project's own mobile session and Codex thread; it does not move the current thread to another cwd.
 
 ## Rich WeChat Output
 
@@ -112,3 +121,4 @@ When communicating with the user through WeChat, keep normal status replies shor
 - Do not ask the user to paste tokens.
 - Prefer `--project current` from Desktop unless the user names a project.
 - Keep `mode` separate from carry state; phone-side `/mode read|write|bypass` controls permissions.
+- Match the user's language when explaining onboarding. Chinese user messages should get Chinese explanations; English user messages should get English explanations.

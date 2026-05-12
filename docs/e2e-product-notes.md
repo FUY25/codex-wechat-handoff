@@ -28,6 +28,8 @@ The long CLI form should stay available as an advanced fallback:
 codex-wechat pull
 ```
 
+Status: implemented. Onboarding and carry notices now lead with "pull WeChat back"; CLI is described as fallback.
+
 ## Project, Default Chat, And Carry-Over Mental Model
 
 Explain the relationship clearly:
@@ -37,6 +39,9 @@ Explain the relationship clearly:
 - Carry-over: temporarily attaches the current Desktop Codex thread to WeChat so the phone continues from the active Desktop context.
 - Pull-back: returns that attached Desktop thread to the computer and summarizes the phone-side continuation.
 - Detach: exits Desktop carry-over and returns WeChat to its previous phone-owned project session.
+- `/project <name>`: switches the active project for that sender. Each project has its own phone-side session/thread; it does not change the cwd of one existing thread.
+
+Status: implemented in onboarding and docs.
 
 ## Allowed Projects Setup
 
@@ -58,6 +63,8 @@ Desired flow:
 
 This should make it obvious that WeChat can jump between allowed local projects from mobile, while only configured projects are exposed.
 
+Status: implemented with `codex-wechat project add <name> --cwd <path> --mode read`.
+
 ## Typo And Intent Handling
 
 Slash command typos currently return a strict unknown-command message. This is usable but not native enough.
@@ -69,12 +76,7 @@ Desired behavior:
 - Keep regular non-command text routed to Codex as the project agent.
 - Explain that yes, when the bridge is running there is already a Codex agent behind ordinary WeChat messages; strict parsing only applies to slash commands before they are routed to Codex.
 
-## Follow-Up Implementation
-
-- Shorten onboarding carry-back wording.
-- Add `/wechat pull` and `codex-wechat pull` as first-class docs wording.
-- Add fuzzy slash-command suggestions.
-- Add natural-language intent parsing for common handoff controls.
+Status: implemented for slash suggestions and common handoff intents. `/model bypass` now points users to `/mode bypass`.
 
 ## E2E Finding: Listener State Merge
 
@@ -85,3 +87,11 @@ Implication:
 - Carry-over works if the listener loads the route after it is created.
 - Running `carry-current` against a live listener needs state reload or merge-before-save.
 - Any command handled by the listener should reload or merge `sessions.json` before saving, or `carry-current` should signal the listener through a queue/event path instead of writing state independently.
+
+Status: implemented by reloading bridge state before each inbound message and by adding a fresh-state command helper test.
+
+## Remaining Follow-Up
+
+- Real E2E should be rerun after the state-merge fix with the listener already running during `carry-current`.
+- `/stop` still reports that safe interrupt is not implemented.
+- Full language localization is still lightweight: docs and onboarding now include bilingual project/session wording, but command replies are not fully localized per sender.

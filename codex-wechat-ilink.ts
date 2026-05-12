@@ -225,6 +225,7 @@ export type BridgeCommand =
   | { type: "detach" }
   | { type: "history"; count: number }
   | { type: "onboarding" }
+  | { type: "intro" }
   | { type: "help" }
   | { type: "stop" }
   | { type: "status" }
@@ -1261,6 +1262,7 @@ export function carryCurrentToWeChat(
   };
   sender.routes ??= {};
   sender.routes[params.projectName] = route;
+  const model = activeModel(state, projects, params.senderId, params.projectName) ?? "default";
   const notification = [
     "continue from here",
     "",
@@ -1268,9 +1270,12 @@ export function carryCurrentToWeChat(
     `project: ${params.projectName}`,
     `thread: ${params.threadId}`,
     `mode: ${mode}`,
+    `model: ${model}`,
     "",
     "直接回复就从这里继续。",
-    "回电脑时可以在电脑上说 /wechat pull，或在手机发 /back。",
+    "回电脑后，对 Codex 说：pull WeChat back。",
+    "CLI fallback：codex-wechat pull --project current。",
+    "也可以先在手机发 /back。",
   ].join("\n");
   return { notification, route };
 }
@@ -1300,7 +1305,7 @@ export function buildCarryBackDelta(
 
 export function pullCurrentToDesktop(
   state: BridgeState,
-  params: { threadId: string; projectName?: string; events: BridgeEvent[]; now?: string },
+  params: { threadId: string; projectName?: string; events: BridgeEvent[]; now?: string; projects?: ProjectRegistry },
 ): { senderId: string; projectName: string; delta: string; notification: string } {
   const found = findRouteByThread(state, params.threadId, params.projectName);
   if (!found) throw new Error(`No WeChat route is attached to thread ${params.threadId}`);
@@ -1311,8 +1316,14 @@ export function pullCurrentToDesktop(
     senderId: found.senderId,
     since: found.route.attachedAt ?? null,
   });
+  const projectsForRoute = state.senders[found.senderId];
+  const mode = projectsForRoute?.activeMode ?? projectsForRoute?.sessions?.[found.projectName]?.mode ?? "read";
+  const model = projectsForRoute?.projectModels?.[found.projectName] ?? params.projects?.projects[found.projectName]?.model ?? "default";
   const notification = [
     "已切回电脑继续。",
+    `project: ${found.projectName}`,
+    `mode: ${mode}`,
+    `model: ${model}`,
     "手机这边已暂停 remote mode。",
     "",
     "如果还想从手机继续，发 /resume。",
@@ -1329,7 +1340,15 @@ export function buildOnboardingMessage(): string {
     "1. 在 Codex Desktop 里说：carry this to WeChat",
     "2. 或运行：codex-wechat carry-current --project current --to last",
     "3. 手机微信直接回复，就会继续同一个 Codex thread。",
-    "4. 回电脑后运行：codex-wechat pull-current --project current",
+    "4. 回电脑后，对 Codex 说：pull WeChat back",
+    "   CLI fallback：codex-wechat pull --project current",
+    "",
+    "项目和默认会话：",
+    "默认微信聊天是当前 sender + project 的手机 session。",
+    "每个 project 有自己的手机 session / Codex thread；/project <name> 是切到另一个 project 的 session，不是把当前 thread 强行改 cwd。",
+    "Each project has its own mobile session and Codex thread; /project <name> switches sessions instead of changing one thread's cwd.",
+    "carry-over 会临时接管电脑上的 Desktop thread。",
+    "退出 carry-over 后会回到之前的手机 session。",
     "",
     "其他常用命令：",
     "/projects 查看项目",
@@ -1337,12 +1356,94 @@ export function buildOnboardingMessage(): string {
     "/mode read|write|bypass 改权限",
     "/model 查看或设置模型",
     "/status 查看当前 thread",
+    "/new 开一个新的手机侧 project session；Desktop carry-over 中会被拦截。",
+    "/stop 查看当前停止能力；安全 interrupt 还在开发中。",
     "/help 查看全部命令",
+    "",
+    "长线程说明：如果同一个 Codex thread 超过上下文窗口，Codex 可能自动 compact 或摘要历史；bridge 会继续使用同一个 thread id。",
+  ].join("\n");
+}
+
+export function buildIntroMessage(): string {
+  return [
+    "Codex WeChat Handoff：把电脑上的 Codex 会话带到微信继续。",
+    "",
+    "出门前对 Codex 说：carry this to WeChat",
+    "回电脑后对 Codex 说：pull WeChat back",
+    "",
+    "手机里用 /projects 看项目，用 /project <name> 切项目。",
+    "完整说明发 /onboarding。",
   ].join("\n");
 }
 
 function normalizeMode(mode: string): BridgeMode | null {
   if (mode === "read" || mode === "write" || mode === "bypass") return mode;
+  return null;
+}
+
+const SLASH_COMMANDS = [
+  "/project",
+  "/projects",
+  "/current",
+  "/info",
+  "/sessions",
+  "/list",
+  "/attach",
+  "/switch",
+  "/back",
+  "/resume",
+  "/detach",
+  "/history",
+  "/onboarding",
+  "/intro",
+  "/help",
+  "/stop",
+  "/mode",
+  "/model",
+  "/health",
+  "/status",
+  "/new",
+  "/clear",
+];
+
+function editDistance(a: string, b: string): number {
+  const previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i++) {
+    let lastDiagonal = previous[0];
+    previous[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const old = previous[j];
+      previous[j] = Math.min(
+        previous[j] + 1,
+        previous[j - 1] + 1,
+        lastDiagonal + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+      lastDiagonal = old;
+    }
+  }
+  return previous[b.length];
+}
+
+function suggestSlashCommand(command: string): string | null {
+  const ranked = SLASH_COMMANDS
+    .map((candidate) => ({ candidate, distance: editDistance(command, candidate) }))
+    .sort((a, b) => a.distance - b.distance || a.candidate.localeCompare(b.candidate));
+  const best = ranked[0];
+  if (!best) return null;
+  return best.distance <= 3 ? best.candidate : null;
+}
+
+function parseNaturalBridgeIntent(trimmed: string): BridgeCommand | null {
+  const compact = trimmed.toLowerCase().replace(/\s+/g, "");
+  if (["回电脑继续", "切回电脑", "回到电脑继续", "pullwechatback"].includes(compact)) {
+    return { type: "back" };
+  }
+  if (["继续手机remote", "继续手机", "手机继续", "resumeremote"].includes(compact)) {
+    return { type: "resume" };
+  }
+  if (["退出carry-over", "退出carryover", "回默认会话", "结束handoff", "detach"].includes(compact)) {
+    return { type: "detach" };
+  }
   return null;
 }
 
@@ -1394,6 +1495,16 @@ function loadProjectsConfig(file?: string): ProjectsConfig | undefined {
   return JSON.parse(readFileSync(file, "utf-8")) as ProjectsConfig;
 }
 
+function saveProjectsConfig(file: string, config: ProjectsConfig): void {
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, JSON.stringify(config, null, 2), "utf-8");
+  try {
+    chmodSync(file, 0o600);
+  } catch {
+    // Best effort only.
+  }
+}
+
 function loadBridgeState(stateDir: string): BridgeState {
   const file = bridgeStateFile(stateDir);
   if (!existsSync(file)) return createBridgeState();
@@ -1442,7 +1553,7 @@ function activeModel(state: BridgeState, projects: ProjectRegistry, senderId: st
 
 export function parseBridgeCommand(text: string): BridgeCommand {
   const trimmed = text.trim();
-  if (!trimmed.startsWith("/")) return { type: "message", text };
+  if (!trimmed.startsWith("/")) return parseNaturalBridgeIntent(trimmed) ?? { type: "message", text };
 
   const [rawCommand, ...rest] = trimmed.split(/\s+/);
   const command = rawCommand.toLowerCase();
@@ -1467,7 +1578,8 @@ export function parseBridgeCommand(text: string): BridgeCommand {
     if (!Number.isInteger(count) || count <= 0) return { type: "error", message: "Usage: /history [positive_number]" };
     return { type: "history", count };
   }
-  if (command === "/onboarding" || command === "/intro") return { type: "onboarding" };
+  if (command === "/onboarding") return { type: "onboarding" };
+  if (command === "/intro") return { type: "intro" };
   if (command === "/help") return { type: "help" };
   if (command === "/stop") return { type: "stop" };
   if (command === "/mode") {
@@ -1478,6 +1590,9 @@ export function parseBridgeCommand(text: string): BridgeCommand {
   if (command === "/model") {
     if (!arg) return { type: "modelStatus" };
     const normalized = arg.toLowerCase();
+    if (normalizeMode(normalized)) {
+      return { type: "error", message: `${normalized} is a permission mode. Use /mode ${normalized}, not /model ${normalized}.` };
+    }
     if (normalized === "default" || normalized === "reset" || normalized === "auto") {
       return { type: "model", model: null };
     }
@@ -1490,7 +1605,8 @@ export function parseBridgeCommand(text: string): BridgeCommand {
   if (command === "/status") return { type: "status" };
   if (command === "/new" || command === "/clear") return { type: "new" };
 
-  return { type: "error", message: `Unknown command: ${rawCommand}` };
+  const suggestion = suggestSlashCommand(command);
+  return { type: "error", message: suggestion ? `Unknown command: ${rawCommand}. Did you mean ${suggestion}?` : `Unknown command: ${rawCommand}` };
 }
 
 export function applyBridgeCommand(
@@ -1650,11 +1766,15 @@ export function applyBridgeCommand(
     return { handled: true, reply: buildOnboardingMessage() };
   }
 
+  if (command.type === "intro") {
+    return { handled: true, reply: buildIntroMessage() };
+  }
+
   if (command.type === "help") {
     return {
       handled: true,
       reply: [
-        "/onboarding /intro",
+        "/intro /onboarding",
         "/current /sessions /attach latest|<id>",
         "/back /resume /detach",
         "/projects /project <name>",
@@ -1674,11 +1794,33 @@ export function applyBridgeCommand(
   }
 
   if (command.type === "new") {
+    if (route?.attachedThreadId && route.leaseState !== "desktop_active") {
+      return {
+        handled: true,
+        reply: [
+          "当前正在 Desktop carry-over，不能直接 /new。",
+          "要回到之前的手机会话，发 /detach。",
+          "要切回电脑，发 /back。",
+        ].join("\n"),
+      };
+    }
     delete sender.sessions[projectName];
     return { handled: true, reply: `new session requested for project: ${projectName}` };
   }
 
   return { handled: true, reply: "Unhandled command." };
+}
+
+export function applyBridgeCommandToFreshState(
+  stateDir: string,
+  projects: ProjectRegistry,
+  senderId: string,
+  command: Exclude<BridgeCommand, { type: "message" }>,
+): { handled: true; reply: string; state: BridgeState } {
+  const state = loadBridgeState(stateDir);
+  const result = applyBridgeCommand(state, projects, senderId, command);
+  saveBridgeState(stateDir, state);
+  return { ...result, state };
 }
 
 export function sandboxForMode(mode: BridgeMode, cwd: string): AppServerSandboxPolicy {
@@ -2988,6 +3130,53 @@ async function commandInit(options: RuntimeOptions, args: Args): Promise<void> {
   console.log("Then: codex-wechat daemon install");
 }
 
+async function commandProjectConfig(options: RuntimeOptions, args: Args): Promise<void> {
+  const subcommand = args._[1] || "list";
+  const projectsPath = options.projectsFile ?? defaultProjectsFile(options.stateDir);
+
+  if (subcommand === "add") {
+    const name = args._[2]?.trim();
+    if (!name) throw new Error("Usage: codex-wechat project add <name> --cwd /absolute/path [--mode read|write|bypass]");
+    if (!/^[a-zA-Z0-9_-]+$/.test(name)) throw new Error("Project names may contain only letters, numbers, hyphen, and underscore.");
+    const cwd = path.resolve(expandHome(optionString(args, "cwd", process.cwd())));
+    const mode = normalizeMode(optionString(args, "mode", "read"));
+    if (!mode) throw new Error("Unknown mode. Use read, write, or bypass.");
+    const config = loadProjectsConfig(projectsPath) ?? {
+      defaultProject: name,
+      allowedSenderIds: [],
+      projects: {},
+    };
+    config.defaultProject ??= name;
+    config.allowedSenderIds ??= [];
+    config.projects ??= {};
+    config.projects[name] = { cwd, defaultMode: mode };
+    saveProjectsConfig(projectsPath, config);
+    console.log(`project: ${name}`);
+    console.log(`cwd: ${cwd}`);
+    console.log(`mode: ${mode}`);
+    console.log(`config: ${projectsPath}`);
+    console.log("Mobile commands:");
+    console.log("/projects");
+    console.log(`/project ${name}`);
+    console.log("/status");
+    return;
+  }
+
+  if (subcommand === "list") {
+    const projects = loadProjectRegistry({
+      workspace: options.workspace,
+      projectsConfig: loadProjectsConfig(projectsPath),
+    });
+    console.log(`default: ${projects.defaultProject}`);
+    for (const [name, project] of Object.entries(projects.projects)) {
+      console.log(`${name}: ${project.cwd} (${project.defaultMode})`);
+    }
+    return;
+  }
+
+  throw new Error(`Unknown project command: ${subcommand}. Use add or list.`);
+}
+
 function resolveExecutable(command: string): string | null {
   const expanded = expandHome(command);
   if (expanded.includes("/") && isExecutablePath(expanded)) return expanded;
@@ -3310,6 +3499,7 @@ async function commandPullCurrent(options: RuntimeOptions, args: Args): Promise<
     threadId,
     projectName,
     events: eventsBeforePull,
+    projects,
   });
   saveBridgeState(options.stateDir, state);
   appendBridgeEvent(options.stateDir, { type: "desktop_pull_completed", data: { senderId: result.senderId, projectName, threadId } });
@@ -3490,7 +3680,7 @@ async function commandStart(options: RuntimeOptions): Promise<void> {
     workspace: options.workspace,
     projectsConfig: loadProjectsConfig(options.projectsFile),
   });
-  const bridgeState = loadBridgeState(options.stateDir);
+  let bridgeState = loadBridgeState(options.stateDir);
   const appServer = options.backend === "app-server" ? new CodexAppServerClient(options) : null;
   mkdirSync(options.stateDir, { recursive: true });
   const lock = acquireBridgeLock(options.stateDir, {
@@ -3561,6 +3751,7 @@ async function commandStart(options: RuntimeOptions): Promise<void> {
 
       for (const msg of updates.msgs ?? []) {
         if (msg.message_type !== MSG_TYPE_USER) continue;
+        bridgeState = loadBridgeState(options.stateDir);
         const senderId = msg.from_user_id ?? "";
         const contextToken = msg.context_token ?? "";
         const text = extractTextFromMessage(msg);
@@ -3776,6 +3967,8 @@ function printHelp(): void {
 
 Usage:
   codex-wechat init [--project NAME] [--cwd PATH]
+  codex-wechat project add <name> --cwd PATH [--mode read|write|bypass]
+  codex-wechat project list
   codex-wechat doctor
   codex-wechat qr [--state-dir PATH]
   codex-wechat setup [--force] [--state-dir PATH]
@@ -3825,8 +4018,8 @@ WeChat commands:
   /back
   /resume
   /detach
-  /onboarding
   /intro
+  /onboarding
   /history [n]
   /help
   /new
@@ -3847,6 +4040,8 @@ async function main(): Promise<void> {
     printHelp();
   } else if (command === "init") {
     await commandInit(options, args);
+  } else if (command === "project") {
+    await commandProjectConfig(options, args);
   } else if (command === "doctor") {
     await commandDoctor(options);
   } else if (command === "daemon") {
