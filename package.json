@@ -7,7 +7,8 @@
     "qr": "bun codex-wechat-ilink.ts qr",
     "setup": "bun codex-wechat-ilink.ts setup",
     "start": "bun codex-wechat-ilink.ts start",
-    "ask": "bun codex-wechat-ilink.ts ask"
+    "ask": "bun codex-wechat-ilink.ts ask",
+    "test": "bun test"
   },
   "dependencies": {
     "qrcode": "^1.5.4"

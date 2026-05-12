@@ -1,0 +1,19 @@
+{
+  "defaultProject": "wechat-to-codex",
+  "allowedSenderIds": [],
+  "projects": {
+    "wechat-to-codex": {
+      "cwd": "/Users/fuyuming/Desktop/wechat-to-codex",
+      "defaultMode": "read"
+    },
+    "vibelight": {
+      "cwd": "/Users/fuyuming/Desktop/project/vibelight",
+      "defaultMode": "read"
+    },
+    "marklab": {
+      "cwd": "/Users/fuyuming/Desktop/markdown_ai_collab_milkdown_spec",
+      "defaultMode": "read"
+    }
+  }
+}
+

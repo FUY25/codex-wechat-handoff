@@ -62,6 +62,9 @@ type RuntimeOptions = {
   stateDir: string;
   baseUrl: string;
   workspace: string;
+  projectsFile?: string;
+  backend: "app-server" | "exec";
+  appServerLogs: boolean;
   codexBin: string;
   codexModel?: string;
   codexSandbox: string;
@@ -70,6 +73,67 @@ type RuntimeOptions = {
   persistCodexSessions: boolean;
   dryRun: boolean;
   mockReply?: string;
+};
+
+export type BridgeMode = "read" | "write" | "bypass";
+
+export type ProjectConfig = {
+  cwd: string;
+  defaultMode?: BridgeMode;
+  model?: string;
+};
+
+export type ProjectsConfig = {
+  defaultProject?: string;
+  allowedSenderIds?: string[];
+  projects: Record<string, ProjectConfig>;
+};
+
+export type ProjectRegistry = {
+  defaultProject: string;
+  allowedSenderIds: string[];
+  projects: Record<string, Required<Pick<ProjectConfig, "cwd">> & Omit<ProjectConfig, "cwd"> & { defaultMode: BridgeMode }>;
+};
+
+export type SenderProjectSession = {
+  threadId?: string;
+  cwd: string;
+  mode: BridgeMode;
+};
+
+export type SenderState = {
+  activeProject?: string;
+  activeMode?: BridgeMode;
+  sessions: Record<string, SenderProjectSession>;
+};
+
+export type BridgeState = {
+  senders: Record<string, SenderState>;
+};
+
+export type BridgeCommand =
+  | { type: "message"; text: string }
+  | { type: "project"; project: string }
+  | { type: "projects" }
+  | { type: "mode"; mode: BridgeMode }
+  | { type: "status" }
+  | { type: "new" }
+  | { type: "error"; message: string };
+
+type AppServerSandboxPolicy =
+  | { type: "readOnly"; networkAccess: false }
+  | { type: "workspaceWrite"; networkAccess: false; writableRoots: string[] }
+  | { type: "dangerFullAccess" };
+
+type AppServerRunResult = {
+  threadId: string;
+  reply: string;
+};
+
+type AppServerRequest = {
+  id: number;
+  method: string;
+  params?: unknown;
 };
 
 function parseArgs(argv: string[]): Args {
@@ -125,6 +189,9 @@ function runtimeOptions(args: Args): RuntimeOptions {
     stateDir: path.resolve(expandHome(optionString(args, "state-dir", defaultStateDir))),
     baseUrl: optionString(args, "base-url", DEFAULT_BASE_URL),
     workspace: path.resolve(expandHome(optionString(args, "workspace", process.cwd()))),
+    projectsFile: typeof args.projects === "string" ? path.resolve(expandHome(args.projects)) : undefined,
+    backend: optionString(args, "backend", "app-server") === "exec" ? "exec" : "app-server",
+    appServerLogs: Boolean(args["app-server-logs"]),
     codexBin: optionString(args, "codex-bin", "codex"),
     codexModel: typeof args.model === "string" ? args.model : undefined,
     codexSandbox: optionString(args, "codex-sandbox", "read-only"),
@@ -146,6 +213,435 @@ function accountFile(stateDir: string): string {
 
 function syncBufFile(stateDir: string): string {
   return path.join(stateDir, "sync_buf.txt");
+}
+
+function bridgeStateFile(stateDir: string): string {
+  return path.join(stateDir, "sessions.json");
+}
+
+export function createBridgeState(): BridgeState {
+  return { senders: {} };
+}
+
+function normalizeMode(mode: string): BridgeMode | null {
+  if (mode === "read" || mode === "write" || mode === "bypass") return mode;
+  return null;
+}
+
+export function loadProjectRegistry(params: { workspace: string; projectsConfig?: ProjectsConfig }): ProjectRegistry {
+  const projectsConfig = params.projectsConfig;
+  if (!projectsConfig) {
+    return {
+      defaultProject: "default",
+      allowedSenderIds: [],
+      projects: {
+        default: {
+          cwd: path.resolve(params.workspace),
+          defaultMode: "read",
+        },
+      },
+    };
+  }
+
+  const projectEntries = Object.entries(projectsConfig.projects ?? {});
+  if (!projectEntries.length) {
+    throw new Error("projects config must define at least one project");
+  }
+
+  const projects: ProjectRegistry["projects"] = {};
+  for (const [name, config] of projectEntries) {
+    if (!config.cwd?.trim()) throw new Error(`project ${name} is missing cwd`);
+    projects[name] = {
+      ...config,
+      cwd: path.resolve(expandHome(config.cwd)),
+      defaultMode: config.defaultMode ?? "read",
+    };
+  }
+
+  const defaultProject = projectsConfig.defaultProject ?? projectEntries[0][0];
+  if (!projects[defaultProject]) {
+    throw new Error(`default project does not exist: ${defaultProject}`);
+  }
+
+  return {
+    defaultProject,
+    allowedSenderIds: projectsConfig.allowedSenderIds ?? [],
+    projects,
+  };
+}
+
+function loadProjectsConfig(file?: string): ProjectsConfig | undefined {
+  if (!file) return undefined;
+  return JSON.parse(readFileSync(file, "utf-8")) as ProjectsConfig;
+}
+
+function loadBridgeState(stateDir: string): BridgeState {
+  const file = bridgeStateFile(stateDir);
+  if (!existsSync(file)) return createBridgeState();
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf-8")) as BridgeState;
+    return parsed && typeof parsed === "object" && parsed.senders ? parsed : createBridgeState();
+  } catch {
+    return createBridgeState();
+  }
+}
+
+function saveBridgeState(stateDir: string, state: BridgeState): void {
+  mkdirSync(stateDir, { recursive: true });
+  const file = bridgeStateFile(stateDir);
+  writeFileSync(file, JSON.stringify(state, null, 2), "utf-8");
+  try {
+    chmodSync(file, 0o600);
+  } catch {
+    // Best effort only.
+  }
+}
+
+function senderState(state: BridgeState, senderId: string): SenderState {
+  state.senders[senderId] ??= { sessions: {} };
+  state.senders[senderId].sessions ??= {};
+  return state.senders[senderId];
+}
+
+function activeProjectName(state: BridgeState, projects: ProjectRegistry, senderId: string): string {
+  const sender = senderState(state, senderId);
+  return sender.activeProject && projects.projects[sender.activeProject] ? sender.activeProject : projects.defaultProject;
+}
+
+function activeMode(state: BridgeState, projects: ProjectRegistry, senderId: string): BridgeMode {
+  const sender = senderState(state, senderId);
+  if (sender.activeMode) return sender.activeMode;
+  return projects.projects[activeProjectName(state, projects, senderId)].defaultMode;
+}
+
+export function parseBridgeCommand(text: string): BridgeCommand {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("/")) return { type: "message", text };
+
+  const [rawCommand, ...rest] = trimmed.split(/\s+/);
+  const command = rawCommand.toLowerCase();
+  const arg = rest.join(" ").trim();
+
+  if (command === "/project") {
+    if (!arg) return { type: "error", message: "Usage: /project <name>" };
+    return { type: "project", project: arg };
+  }
+  if (command === "/projects") return { type: "projects" };
+  if (command === "/mode") {
+    const mode = normalizeMode(arg);
+    if (!mode) return { type: "error", message: `Unknown mode: ${arg || "(empty)"}. Use read, write, or bypass.` };
+    return { type: "mode", mode };
+  }
+  if (command === "/status") return { type: "status" };
+  if (command === "/new") return { type: "new" };
+
+  return { type: "error", message: `Unknown command: ${rawCommand}` };
+}
+
+export function applyBridgeCommand(
+  state: BridgeState,
+  projects: ProjectRegistry,
+  senderId: string,
+  command: Exclude<BridgeCommand, { type: "message" }>,
+): { handled: true; reply: string } {
+  const sender = senderState(state, senderId);
+
+  if (command.type === "error") return { handled: true, reply: command.message };
+
+  if (command.type === "projects") {
+    const names = Object.entries(projects.projects)
+      .map(([name, project]) => `${name} -> ${project.cwd}`)
+      .join("\n");
+    return { handled: true, reply: `projects:\n${names}` };
+  }
+
+  if (command.type === "project") {
+    if (!projects.projects[command.project]) {
+      return { handled: true, reply: `Unknown project: ${command.project}. Use /projects to list available projects.` };
+    }
+    sender.activeProject = command.project;
+    sender.activeMode ??= projects.projects[command.project].defaultMode;
+    return {
+      handled: true,
+      reply: `project: ${command.project}\nmode: ${sender.activeMode}\ncwd: ${projects.projects[command.project].cwd}`,
+    };
+  }
+
+  if (command.type === "mode") {
+    sender.activeMode = command.mode;
+    return { handled: true, reply: `mode: ${command.mode}` };
+  }
+
+  const projectName = activeProjectName(state, projects, senderId);
+  const project = projects.projects[projectName];
+  const mode = activeMode(state, projects, senderId);
+  const session = sender.sessions[projectName];
+
+  if (command.type === "status") {
+    return {
+      handled: true,
+      reply: [
+        `project: ${projectName}`,
+        `mode: ${mode}`,
+        `thread: ${session?.threadId ?? "none"}`,
+        `cwd: ${project.cwd}`,
+      ].join("\n"),
+    };
+  }
+
+  if (command.type === "new") {
+    delete sender.sessions[projectName];
+    return { handled: true, reply: `new session requested for project: ${projectName}` };
+  }
+
+  return { handled: true, reply: "Unhandled command." };
+}
+
+export function sandboxForMode(mode: BridgeMode, cwd: string): AppServerSandboxPolicy {
+  if (mode === "read") return { type: "readOnly", networkAccess: false };
+  if (mode === "write") return { type: "workspaceWrite", networkAccess: false, writableRoots: [cwd] };
+  return { type: "dangerFullAccess" };
+}
+
+function legacySandboxForMode(mode: BridgeMode): string {
+  if (mode === "read") return "read-only";
+  if (mode === "write") return "workspace-write";
+  return "danger-full-access";
+}
+
+export function buildWechatTurnInput(params: {
+  senderId: string;
+  projectName: string;
+  mode: BridgeMode;
+  text: string;
+}): string {
+  return [
+    "source: WeChat",
+    `sender_id: ${params.senderId}`,
+    `project: ${params.projectName}`,
+    `mode: ${params.mode}`,
+    "",
+    "Reply with the exact text that should be sent back to WeChat.",
+    "Keep replies concise and plain text unless the user explicitly asks for detail.",
+    "",
+    "User message:",
+    params.text,
+  ].join("\n");
+}
+
+class CodexAppServerClient {
+  private proc: ReturnType<typeof Bun.spawn> | null = null;
+  private nextId = 1;
+  private buffer = "";
+  private initialized = false;
+  private pending = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
+  private turnCollectors = new Map<string, { text: string; resolve: (value: string) => void; reject: (error: Error) => void }>();
+
+  constructor(private readonly options: RuntimeOptions) {}
+
+  async runTurn(params: {
+    threadId?: string;
+    cwd: string;
+    mode: BridgeMode;
+    input: string;
+    projectName: string;
+  }): Promise<AppServerRunResult> {
+    await this.ensureStarted();
+    let threadId: string;
+    if (params.threadId) {
+      try {
+        threadId = await this.resumeThread(params);
+      } catch (error) {
+        console.error(`Failed to resume Codex thread ${params.threadId}; starting a new thread: ${error instanceof Error ? error.message : String(error)}`);
+        threadId = await this.startThread(params);
+      }
+    } else {
+      threadId = await this.startThread(params);
+    }
+    const turn = await this.request("turn/start", {
+      threadId,
+      input: [{ type: "text", text: params.input }],
+      approvalPolicy: "never",
+      cwd: params.cwd,
+      model: this.options.codexModel ?? null,
+      sandboxPolicy: sandboxForMode(params.mode, params.cwd),
+    });
+    const turnId = turn?.turn?.id;
+    if (!turnId) throw new Error("app-server turn/start did not return a turn id");
+    const reply = await this.waitForTurn(threadId, turnId);
+    return { threadId, reply };
+  }
+
+  stop(): void {
+    for (const pending of this.pending.values()) pending.reject(new Error("app-server stopped"));
+    this.pending.clear();
+    for (const collector of this.turnCollectors.values()) collector.reject(new Error("app-server stopped"));
+    this.turnCollectors.clear();
+    this.proc?.kill("SIGTERM");
+    this.proc = null;
+    this.initialized = false;
+  }
+
+  private async startThread(params: { cwd: string; mode: BridgeMode; projectName: string }): Promise<string> {
+    const response = await this.request("thread/start", {
+      cwd: params.cwd,
+      approvalPolicy: "never",
+      sandbox: legacySandboxForMode(params.mode),
+      ephemeral: false,
+      model: this.options.codexModel ?? null,
+      sessionStartSource: "startup",
+      developerInstructions: [
+        "You are Codex connected to WeChat through a local bridge.",
+        `Active project: ${params.projectName}`,
+        "Send concise plain-text final answers suitable for WeChat.",
+      ].join("\n"),
+    });
+    const threadId = response?.thread?.id;
+    if (!threadId) throw new Error("app-server thread/start did not return a thread id");
+    return threadId;
+  }
+
+  private async resumeThread(params: { threadId?: string; cwd: string; mode: BridgeMode; projectName: string }): Promise<string> {
+    if (!params.threadId) throw new Error("cannot resume without a thread id");
+    const response = await this.request("thread/resume", {
+      threadId: params.threadId,
+      cwd: params.cwd,
+      approvalPolicy: "never",
+      sandbox: legacySandboxForMode(params.mode),
+      model: this.options.codexModel ?? null,
+      developerInstructions: [
+        "You are Codex connected to WeChat through a local bridge.",
+        `Active project: ${params.projectName}`,
+        "Send concise plain-text final answers suitable for WeChat.",
+      ].join("\n"),
+    });
+    const threadId = response?.thread?.id ?? params.threadId;
+    return threadId;
+  }
+
+  private waitForTurn(threadId: string, turnId: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.turnCollectors.delete(turnId);
+        reject(new Error(`app-server turn timed out after ${this.options.codexTimeoutMs}ms`));
+      }, this.options.codexTimeoutMs);
+
+      this.turnCollectors.set(turnId, {
+        text: "",
+        resolve: (value) => {
+          clearTimeout(timeout);
+          this.turnCollectors.delete(turnId);
+          resolve(value.trim());
+        },
+        reject: (error) => {
+          clearTimeout(timeout);
+          this.turnCollectors.delete(turnId);
+          reject(error);
+        },
+      });
+    }).then((reply) => {
+      if (!reply) throw new Error(`app-server returned an empty reply for thread ${threadId}`);
+      return reply;
+    });
+  }
+
+  private async ensureStarted(): Promise<void> {
+    if (this.proc && this.initialized) return;
+
+    this.proc = Bun.spawn([this.options.codexBin, "app-server", "--listen", "stdio://"], {
+      cwd: this.options.workspace,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: process.env,
+    });
+
+    void this.readStdout(this.proc.stdout);
+    void this.readStderr(this.proc.stderr);
+
+    await this.request("initialize", {
+      clientInfo: {
+        name: "wechat-to-codex",
+        title: "WeChat to Codex",
+        version: "0.1.0",
+      },
+      capabilities: {
+        experimentalApi: true,
+      },
+    });
+    this.sendNotification("initialized");
+    this.initialized = true;
+  }
+
+  private request(method: string, params?: unknown): Promise<any> {
+    if (!this.proc) throw new Error("app-server is not started");
+    const id = this.nextId++;
+    const message: AppServerRequest = { id, method, params };
+    this.proc.stdin.write(`${JSON.stringify(message)}\n`);
+    return new Promise((resolve, reject) => {
+      this.pending.set(id, { resolve, reject });
+    });
+  }
+
+  private sendNotification(method: string, params?: unknown): void {
+    if (!this.proc) throw new Error("app-server is not started");
+    this.proc.stdin.write(`${JSON.stringify({ method, params })}\n`);
+  }
+
+  private async readStdout(stdout: ReadableStream<Uint8Array> | null): Promise<void> {
+    if (!stdout) return;
+    const textStream = stdout.pipeThrough(new TextDecoderStream());
+    for await (const chunk of textStream) {
+      this.buffer += chunk;
+      while (this.buffer.includes("\n")) {
+        const idx = this.buffer.indexOf("\n");
+        const line = this.buffer.slice(0, idx).trim();
+        this.buffer = this.buffer.slice(idx + 1);
+        if (!line) continue;
+        this.handleMessage(JSON.parse(line));
+      }
+    }
+  }
+
+  private async readStderr(stderr: ReadableStream<Uint8Array> | null): Promise<void> {
+    if (!stderr) return;
+    const textStream = stderr.pipeThrough(new TextDecoderStream());
+    for await (const chunk of textStream) {
+      if (!this.options.appServerLogs) continue;
+      for (const line of chunk.split("\n")) {
+        if (line.trim()) console.error(`[codex-app-server] ${line}`);
+      }
+    }
+  }
+
+  private handleMessage(message: any): void {
+    if (message.id !== undefined) {
+      const pending = this.pending.get(message.id);
+      if (!pending) return;
+      this.pending.delete(message.id);
+      if (message.error) pending.reject(new Error(message.error.message ?? JSON.stringify(message.error)));
+      else pending.resolve(message.result);
+      return;
+    }
+
+    const turnId = message.params?.turnId ?? message.params?.turn?.id;
+    if (message.method === "item/agentMessage/delta" && turnId) {
+      const collector = this.turnCollectors.get(turnId);
+      if (collector) collector.text += message.params?.delta ?? "";
+      return;
+    }
+
+    if (message.method === "item/completed" && turnId && message.params?.item?.type === "agentMessage") {
+      const collector = this.turnCollectors.get(turnId);
+      if (collector && message.params.item.text) collector.text = message.params.item.text;
+      return;
+    }
+
+    if (message.method === "turn/completed" && turnId) {
+      const collector = this.turnCollectors.get(turnId);
+      if (collector) collector.resolve(collector.text);
+    }
+  }
 }
 
 function randomWechatUin(): string {
@@ -510,12 +1006,46 @@ async function commandAsk(options: RuntimeOptions, args: Args): Promise<void> {
     throw new Error('ask 需要 --message "..." 或直接追加消息文本。');
   }
   const senderId = optionString(args, "sender-id", "local-test@im.wechat");
-  const reply = await runCodexForReply(senderId, message, options);
+  let reply: string;
+  if (options.backend === "app-server" && !options.mockReply) {
+    const projects = loadProjectRegistry({
+      workspace: options.workspace,
+      projectsConfig: loadProjectsConfig(options.projectsFile),
+    });
+    const projectName = projects.defaultProject;
+    const project = projects.projects[projectName];
+    const mode = project.defaultMode;
+    const appServer = new CodexAppServerClient(options);
+    try {
+      const run = await appServer.runTurn({
+        cwd: project.cwd,
+        mode,
+        projectName,
+        input: buildWechatTurnInput({
+          senderId,
+          projectName,
+          mode,
+          text: message,
+        }),
+      });
+      reply = run.reply;
+    } finally {
+      appServer.stop();
+    }
+  } else {
+    reply = await runCodexForReply(senderId, message, options);
+  }
   console.log(reply);
 }
 
 async function commandStart(options: RuntimeOptions): Promise<void> {
   const account = loadAccount(options.stateDir);
+  const projects = loadProjectRegistry({
+    workspace: options.workspace,
+    projectsConfig: loadProjectsConfig(options.projectsFile),
+  });
+  const bridgeState = loadBridgeState(options.stateDir);
+  const appServer = options.backend === "app-server" ? new CodexAppServerClient(options) : null;
   mkdirSync(options.stateDir, { recursive: true });
   let getUpdatesBuf = existsSync(syncBufFile(options.stateDir))
     ? readFileSync(syncBufFile(options.stateDir), "utf-8")
@@ -524,8 +1054,9 @@ async function commandStart(options: RuntimeOptions): Promise<void> {
 
   console.log("开始监听微信消息。");
   console.log(`state: ${options.stateDir}`);
-  console.log(`workspace: ${options.workspace}`);
-  console.log(`codex: ${options.codexBin} exec --sandbox ${options.codexSandbox}`);
+  console.log(`backend: ${options.backend}`);
+  console.log(`default project: ${projects.defaultProject}`);
+  console.log(`projects: ${Object.keys(projects.projects).join(", ")}`);
   if (options.dryRun) console.log("dry-run 已开启：只生成回复，不调用 sendmessage。");
 
   while (true) {
@@ -556,17 +1087,64 @@ async function commandStart(options: RuntimeOptions): Promise<void> {
           console.error(`跳过消息：缺少 context_token，sender=${senderId}`);
           continue;
         }
+        if (projects.allowedSenderIds.length && !projects.allowedSenderIds.includes(senderId)) {
+          console.error(`跳过未授权 sender: ${senderId}`);
+          continue;
+        }
 
         console.log(`收到消息: sender=${senderId} text=${text.slice(0, 120)}`);
-        const reply = await runCodexForReply(senderId, text, options);
+        const parsed = parseBridgeCommand(text);
+        let reply: string;
+
+        if (parsed.type !== "message") {
+          const commandResult = applyBridgeCommand(bridgeState, projects, senderId, parsed);
+          saveBridgeState(options.stateDir, bridgeState);
+          reply = commandResult.reply;
+        } else {
+          const sender = senderState(bridgeState, senderId);
+          const projectName = activeProjectName(bridgeState, projects, senderId);
+          const project = projects.projects[projectName];
+          const mode = activeMode(bridgeState, projects, senderId);
+          const input = buildWechatTurnInput({
+            senderId,
+            projectName,
+            mode,
+            text: parsed.text,
+          });
+
+          if (appServer) {
+            const existingSession = sender.sessions[projectName];
+            const run = await appServer.runTurn({
+              threadId: existingSession?.threadId,
+              cwd: project.cwd,
+              mode,
+              input,
+              projectName,
+            });
+            sender.sessions[projectName] = {
+              threadId: run.threadId,
+              cwd: project.cwd,
+              mode,
+            };
+            saveBridgeState(options.stateDir, bridgeState);
+            reply = run.reply;
+          } else {
+            const execOptions: RuntimeOptions = {
+              ...options,
+              workspace: project.cwd,
+              codexSandbox: legacySandboxForMode(mode),
+            };
+            reply = await runCodexForReply(senderId, input, execOptions);
+            appendHistory(options.stateDir, senderId, "user", text, options.historyLimit);
+            appendHistory(options.stateDir, senderId, "assistant", reply, options.historyLimit);
+          }
+        }
         console.log(`Codex 回复: ${reply.slice(0, 240)}`);
 
         if (!options.dryRun) {
           const clientId = await sendTextMessage(account, senderId, reply, contextToken);
           console.log(`已发送: client_id=${clientId}`);
         }
-        appendHistory(options.stateDir, senderId, "user", text, options.historyLimit);
-        appendHistory(options.stateDir, senderId, "assistant", reply, options.historyLimit);
       }
     } catch (error) {
       consecutiveFailures += 1;
@@ -590,12 +1168,12 @@ Common options:
   --state-dir PATH             Default: ~/.codex/channels/wechat
   --base-url URL               Default: ${DEFAULT_BASE_URL}
   --workspace PATH             Codex working directory, default: current directory
+  --projects PATH              Projects config JSON for /project routing
+  --backend app-server|exec    Default: app-server
+  --app-server-logs            Print codex app-server stderr logs
   --codex-bin PATH             Default: codex
   --model MODEL                Optional Codex model override
-  --codex-sandbox MODE         Default: read-only
   --codex-timeout-ms N         Default: 120000
-  --history-limit N            Default: 12
-  --persist-codex-sessions     Do not pass --ephemeral to codex exec
 `);
 }
 
@@ -620,7 +1198,9 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
-});
+if (import.meta.main) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });
+}

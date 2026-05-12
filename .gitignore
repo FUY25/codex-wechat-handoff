@@ -2,4 +2,5 @@
 tmp-state/
 inspect-package/
 node_modules/
+projects.local.json
 *.tgz
