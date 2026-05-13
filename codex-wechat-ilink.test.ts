@@ -29,10 +29,12 @@ import {
   formatBridgeError,
   getOrdinaryWechatMessageDisposition,
   isIlinkSessionTimeout,
+  findCodexSessionCursorByThread,
   loadProjectRegistry,
   loadContextTokenCache,
   parseReplyMediaDirectives,
   parseBridgeCommand,
+  pauseWechatRoutesForDesktopActivity,
   pullCurrentToDesktop,
   readBridgeEvents,
   readCurrentCodexThreadId,
@@ -620,6 +622,12 @@ describe("stage 1-6 carry-over plan", () => {
       projectName: "vibelight",
       threadId: "desktop-thread",
       now: "2026-05-12T12:00:00.000Z",
+      sessionCursor: {
+        threadId: "desktop-thread",
+        file: "/tmp/desktop-thread.jsonl",
+        size: 100,
+        mtimeMs: 1_000,
+      },
     });
 
     expect(result.notification).toContain("continue from here");
@@ -632,13 +640,108 @@ describe("stage 1-6 carry-over plan", () => {
     expect(result.notification).toContain("model: gpt-5.4-mini");
     expect(result.notification).toContain("现在请在微信继续");
     expect(result.notification).toContain("电脑端先不要继续发消息");
+    expect(result.notification).toContain("微信 remote mode 会自动暂停");
     expect(result.notification).toContain("pull WeChat back");
     expect(state.senders["sender-a"].routes?.vibelight).toMatchObject({
       attachedThreadId: "desktop-thread",
       leaseState: "wechat_active",
       parkedThreadId: "wechat-thread",
+      sessionCursor: {
+        threadId: "desktop-thread",
+        file: "/tmp/desktop-thread.jsonl",
+        size: 100,
+        mtimeMs: 1_000,
+      },
     });
   });
+
+  test("desktop session activity auto-pauses an active WeChat carry route", () =>
+    withTempDir((dir) => {
+      const sessionFile = path.join(dir, "session.jsonl");
+      writeFileSync(
+        sessionFile,
+        [
+          JSON.stringify({ type: "session_meta", payload: { id: "desktop-thread", cwd: "/workspace/vibelight" } }),
+          JSON.stringify({ payload: { type: "message", role: "user", content: [{ type: "input_text", text: "carry baseline" }] } }),
+        ].join("\n") + "\n",
+        "utf-8",
+      );
+      const cursor = findCodexSessionCursorByThread("desktop-thread", [dir]);
+      expect(cursor?.threadId).toBe("desktop-thread");
+
+      const state = createBridgeState();
+      carryCurrentToWeChat(state, projects, {
+        senderId: "sender-a",
+        projectName: "vibelight",
+        threadId: "desktop-thread",
+        now: "2026-05-12T12:00:00.000Z",
+        sessionCursor: cursor ?? undefined,
+      });
+
+      writeFileSync(
+        sessionFile,
+        readFileSync(sessionFile, "utf-8") +
+          JSON.stringify({ payload: { type: "message", role: "user", content: [{ type: "input_text", text: "desktop continued" }] } }) +
+          "\n",
+        "utf-8",
+      );
+
+      const pauses = pauseWechatRoutesForDesktopActivity(state, {
+        roots: [dir],
+        now: "2026-05-12T12:05:00.000Z",
+      });
+
+      expect(pauses).toHaveLength(1);
+      expect(pauses[0].notification).toContain("检测到电脑端已经继续");
+      expect(pauses[0].notification).toContain("/resume");
+      expect(pauses[0].notification).toContain("/detach");
+      expect(state.senders["sender-a"].routes?.vibelight).toMatchObject({
+        leaseState: "desktop_active",
+        activeSurface: "desktop",
+        desktopActivityDetectedAt: "2026-05-12T12:05:00.000Z",
+      });
+      expect(getOrdinaryWechatMessageDisposition(state.senders["sender-a"].routes!.vibelight).action).toBe("block");
+    }));
+
+  test("assistant-only desktop session activity refreshes cursor without pausing WeChat", () =>
+    withTempDir((dir) => {
+      const sessionFile = path.join(dir, "session.jsonl");
+      writeFileSync(
+        sessionFile,
+        [
+          JSON.stringify({ type: "session_meta", payload: { id: "desktop-thread", cwd: "/workspace/vibelight" } }),
+          JSON.stringify({ payload: { type: "message", role: "user", content: [{ type: "input_text", text: "carry baseline" }] } }),
+        ].join("\n") + "\n",
+        "utf-8",
+      );
+      const cursor = findCodexSessionCursorByThread("desktop-thread", [dir]);
+      const state = createBridgeState();
+      carryCurrentToWeChat(state, projects, {
+        senderId: "sender-a",
+        projectName: "vibelight",
+        threadId: "desktop-thread",
+        now: "2026-05-12T12:00:00.000Z",
+        sessionCursor: cursor ?? undefined,
+      });
+
+      writeFileSync(
+        sessionFile,
+        readFileSync(sessionFile, "utf-8") +
+          JSON.stringify({ payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "carry complete" }] } }) +
+          "\n",
+        "utf-8",
+      );
+
+      const updatedCursor = findCodexSessionCursorByThread("desktop-thread", [dir]);
+      const pauses = pauseWechatRoutesForDesktopActivity(state, {
+        roots: [dir],
+        now: "2026-05-12T12:05:00.000Z",
+      });
+
+      expect(pauses).toHaveLength(0);
+      expect(state.senders["sender-a"].routes?.vibelight.leaseState).toBe("wechat_active");
+      expect(state.senders["sender-a"].routes?.vibelight.sessionCursor?.size).toBe(updatedCursor?.size);
+    }));
 
   test("carry and pull normalize legacy bypass state to fullaccess", () => {
     const state = createBridgeState();
@@ -1103,6 +1206,7 @@ describe("cli and skill packaging", () => {
     expect(text.indexOf("核心用法")).toBeLessThan(text.indexOf("其他常用命令"));
     expect(text).toContain("codex-wechat carry-current");
     expect(text).toContain("pull WeChat back");
+    expect(text).toContain("自动暂停");
     expect(text).toContain("codex-wechat pull");
     expect(text).toContain("/new");
     expect(text).toContain("/stop");

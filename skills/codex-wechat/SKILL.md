@@ -72,7 +72,7 @@ When the user says "carry this to WeChat", "continue on phone", or similar:
 
 1. Run `codex-wechat carry-current --project current --to last`.
 2. Report whether the WeChat notification was sent.
-3. Say that carry-over is a handoff lease: continue from WeChat now, and before using this Desktop thread again, pull WeChat back.
+3. Say that carry-over is a handoff lease: continue from WeChat now, and if Desktop/CLI continues the same thread before pull-back, WeChat remote mode auto-pauses until `/resume`, `/detach`, or a fresh carry.
 4. If the output mentions `CODEX_THREAD_ID`, explain that carry must run from inside a Codex Desktop/CLI thread, or use `--thread-id` only for manual testing.
 5. If notification is `not_sent (missing_context_token)`, tell the user to send any message from WeChat first so the bridge can cache a reply context.
 

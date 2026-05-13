@@ -186,6 +186,13 @@ export type SenderProjectSession = {
   mode: StoredBridgeMode;
 };
 
+export type CodexSessionCursor = {
+  threadId: string;
+  file: string;
+  size: number;
+  mtimeMs: number;
+};
+
 export type SenderProjectRoute = RouteRuntimeState & {
   activeSurface?: "desktop" | "wechat";
   attachedThreadId?: string;
@@ -195,6 +202,8 @@ export type SenderProjectRoute = RouteRuntimeState & {
   lastDesktopPullAt?: string | null;
   lastWeChatTurnAt?: string | null;
   pendingDeltaId?: string | null;
+  sessionCursor?: CodexSessionCursor;
+  desktopActivityDetectedAt?: string | null;
 };
 
 export type SenderState = {
@@ -1173,6 +1182,16 @@ function readCodexSessionSummary(filePath: string): CodexSessionSummary | null {
   return { threadId, cwd, file: filePath, mtimeMs: statSync(filePath).mtimeMs, summary };
 }
 
+function cursorFromCodexSessionSummary(summary: CodexSessionSummary): CodexSessionCursor {
+  const stats = statSync(summary.file);
+  return {
+    threadId: summary.threadId,
+    file: summary.file,
+    size: stats.size,
+    mtimeMs: stats.mtimeMs,
+  };
+}
+
 export function discoverCodexSessionsByCwd(
   cwd: string,
   roots: string[] = [path.join(os.homedir(), ".codex", "sessions")],
@@ -1184,6 +1203,19 @@ export function discoverCodexSessionsByCwd(
     .filter((session): session is CodexSessionSummary => Boolean(session))
     .filter((session) => path.resolve(session.cwd) === resolvedCwd)
     .sort((a, b) => b.mtimeMs - a.mtimeMs || b.file.localeCompare(a.file));
+}
+
+export function findCodexSessionCursorByThread(
+  threadId: string,
+  roots: string[] = [path.join(os.homedir(), ".codex", "sessions")],
+): CodexSessionCursor | null {
+  const sessions = roots
+    .flatMap((root) => collectJsonlFiles(root))
+    .map((file) => readCodexSessionSummary(file))
+    .filter((session): session is CodexSessionSummary => Boolean(session))
+    .filter((session) => session.threadId === threadId)
+    .sort((a, b) => b.mtimeMs - a.mtimeMs || b.file.localeCompare(a.file));
+  return sessions[0] ? cursorFromCodexSessionSummary(sessions[0]) : null;
 }
 
 export function readCurrentCodexThreadId(env: Record<string, string | undefined> = process.env): string {
@@ -1241,7 +1273,7 @@ function findRouteByThread(
 export function carryCurrentToWeChat(
   state: BridgeState,
   projects: ProjectRegistry,
-  params: { senderId: string; projectName: string; threadId: string; now?: string; mode?: BridgeMode },
+  params: { senderId: string; projectName: string; threadId: string; now?: string; mode?: BridgeMode; sessionCursor?: CodexSessionCursor },
 ): { notification: string; route: SenderProjectRoute } {
   const project = projects.projects[params.projectName];
   if (!project) throw new Error(`Unknown project: ${params.projectName}`);
@@ -1260,6 +1292,8 @@ export function carryCurrentToWeChat(
     parkedThreadId: existingSession?.threadId,
     lastDesktopPullAt: null,
     pendingDeltaId: null,
+    sessionCursor: params.sessionCursor,
+    desktopActivityDetectedAt: null,
   };
   sender.routes ??= {};
   sender.routes[params.projectName] = route;
@@ -1276,6 +1310,7 @@ export function carryCurrentToWeChat(
     `model: ${model}`,
     "",
     "现在请在微信继续；电脑端先不要继续发消息。",
+    "如果电脑端继续发消息，微信 remote mode 会自动暂停。",
     "如果已经回到电脑，先对 Codex 说：pull WeChat back。",
     "",
     "直接回复就从这里继续。",
@@ -1283,6 +1318,95 @@ export function carryCurrentToWeChat(
     "也可以先在手机发 /back。",
   ].join("\n");
   return { notification, route };
+}
+
+function buildDesktopActivityPauseNotification(params: { projectName: string; threadId: string }): string {
+  return [
+    "检测到电脑端已经继续这个 Codex thread。",
+    "微信 remote mode 已自动暂停。",
+    "",
+    `project: ${params.projectName}`,
+    `thread: ${params.threadId}`,
+    "",
+    "要从手机重新接管，发 /resume。",
+    "要结束这次 handoff，发 /detach。",
+    "如果想再次从电脑交给微信，在电脑说：carry this to WeChat。",
+  ].join("\n");
+}
+
+function notifyDesktopRemotePaused(params: { projectName: string; threadId: string }): void {
+  if (process.platform !== "darwin") return;
+  const title = "WeChat remote paused";
+  const body = `Desktop continued ${params.projectName}; WeChat remote paused. Carry again to resume from phone.`;
+  try {
+    Bun.spawn(["osascript", "-e", `display notification ${JSON.stringify(body)} with title ${JSON.stringify(title)}`], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+  } catch {
+    // Best-effort desktop hint only; WeChat and event-log notifications are authoritative.
+  }
+}
+
+function hasCodexSessionAdvanced(previous: CodexSessionCursor, current: CodexSessionCursor): boolean {
+  if (current.threadId !== previous.threadId) return false;
+  if (current.file !== previous.file) return current.mtimeMs > previous.mtimeMs;
+  return current.size > previous.size;
+}
+
+function containsUserMessageEntry(value: any): boolean {
+  if (!value || typeof value !== "object") return false;
+  if (value.type === "message" && value.role === "user") return true;
+  for (const key of ["payload", "item", "message", "event"]) {
+    if (containsUserMessageEntry(value[key])) return true;
+  }
+  return false;
+}
+
+function hasUserMessageAfterCursor(previous: CodexSessionCursor, current: CodexSessionCursor): boolean {
+  if (previous.file !== current.file) return true;
+  const contents = readFileSync(current.file);
+  const appended = contents.subarray(Math.max(0, previous.size)).toString("utf-8");
+  for (const line of appended.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    try {
+      if (containsUserMessageEntry(JSON.parse(line))) return true;
+    } catch {
+      // Ignore append-in-progress lines.
+    }
+  }
+  return false;
+}
+
+export function pauseWechatRoutesForDesktopActivity(
+  state: BridgeState,
+  params: { roots?: string[]; now?: string } = {},
+): Array<{ senderId: string; projectName: string; threadId: string; notification: string }> {
+  const pauses: Array<{ senderId: string; projectName: string; threadId: string; notification: string }> = [];
+  const now = params.now ?? new Date().toISOString();
+  for (const [senderId, sender] of Object.entries(state.senders)) {
+    for (const [projectName, route] of Object.entries(sender.routes ?? {})) {
+      if (route.leaseState !== "wechat_active") continue;
+      if (!route.attachedThreadId || !route.sessionCursor) continue;
+      const current = findCodexSessionCursorByThread(route.attachedThreadId, params.roots);
+      if (!current || !hasCodexSessionAdvanced(route.sessionCursor, current)) continue;
+      if (!hasUserMessageAfterCursor(route.sessionCursor, current)) {
+        route.sessionCursor = current;
+        continue;
+      }
+      route.leaseState = "desktop_active";
+      route.activeSurface = "desktop";
+      route.desktopActivityDetectedAt = now;
+      route.sessionCursor = current;
+      pauses.push({
+        senderId,
+        projectName,
+        threadId: route.attachedThreadId,
+        notification: buildDesktopActivityPauseNotification({ projectName, threadId: route.attachedThreadId }),
+      });
+    }
+  }
+  return pauses;
 }
 
 export function buildCarryBackDelta(
@@ -1349,7 +1473,8 @@ export function buildOnboardingMessage(): string {
     "1. 在 Codex Desktop 里说：carry this to WeChat",
     "2. 或运行：codex-wechat carry-current --project current --to last",
     "3. 手机微信直接回复，就会继续同一个 Codex thread。",
-    "4. 回电脑后，对 Codex 说：pull WeChat back",
+    "4. 如果电脑端继续发消息，微信 remote mode 会自动暂停。",
+    "5. 回电脑后，对 Codex 说：pull WeChat back",
     "   CLI fallback：codex-wechat pull --project current",
     "",
     "Project/session binding：",
@@ -3511,6 +3636,7 @@ async function commandCarryCurrent(options: RuntimeOptions, args: Args): Promise
     projectName,
     threadId,
     mode: normalizeMode(typeof args.mode === "string" ? args.mode : "") ?? undefined,
+    sessionCursor: findCodexSessionCursorByThread(threadId) ?? undefined,
   });
   saveBridgeState(options.stateDir, state);
   appendBridgeEvent(options.stateDir, { type: "carry_attached", data: { senderId, projectName, threadId } });
@@ -3837,6 +3963,48 @@ async function commandStart(options: RuntimeOptions): Promise<void> {
         writeFileSync(syncBufFile(options.stateDir), getUpdatesBuf, "utf-8");
       }
 
+      bridgeState = loadBridgeState(options.stateDir);
+      const desktopPauses = pauseWechatRoutesForDesktopActivity(bridgeState);
+      if (desktopPauses.length) {
+        saveBridgeState(options.stateDir, bridgeState);
+        for (const pause of desktopPauses) {
+          appendBridgeEvent(options.stateDir, {
+            type: "desktop_activity_detected",
+            data: { senderId: pause.senderId, projectName: pause.projectName, threadId: pause.threadId },
+          });
+          appendBridgeEvent(options.stateDir, {
+            type: "lease_changed",
+            data: { senderId: pause.senderId, projectName: pause.projectName, threadId: pause.threadId, leaseState: "desktop_active" },
+          });
+          notifyDesktopRemotePaused({ projectName: pause.projectName, threadId: pause.threadId });
+          try {
+            const sendResult = await sendProactiveText({
+              account,
+              stateDir: options.stateDir,
+              senderId: pause.senderId,
+              text: pause.notification,
+              context: "desktop_activity_pause",
+              dryRun: options.dryRun,
+            });
+            appendBridgeEvent(options.stateDir, {
+              type: sendResult.sent ? "wechat_remote_paused" : "reply_send_failed",
+              data: { senderId: pause.senderId, projectName: pause.projectName, threadId: pause.threadId, context: "desktop_activity_pause", reason: sendResult.reason },
+            });
+          } catch (error) {
+            appendBridgeEvent(options.stateDir, {
+              type: "reply_send_failed",
+              data: {
+                senderId: pause.senderId,
+                projectName: pause.projectName,
+                threadId: pause.threadId,
+                context: "desktop_activity_pause",
+                error: error instanceof Error ? error.message : String(error),
+              },
+            });
+          }
+        }
+      }
+
       for (const msg of updates.msgs ?? []) {
         if (msg.message_type !== MSG_TYPE_USER) continue;
         bridgeState = loadBridgeState(options.stateDir);
@@ -3966,6 +4134,7 @@ async function commandStart(options: RuntimeOptions): Promise<void> {
                 if (route?.attachedThreadId) {
                   route.attachedThreadId = run.threadId;
                   route.lastWeChatTurnAt = new Date().toISOString();
+                  route.sessionCursor = findCodexSessionCursorByThread(run.threadId) ?? route.sessionCursor;
                 } else {
                   sender.sessions[projectName] = {
                     threadId: run.threadId,
@@ -4001,7 +4170,10 @@ async function commandStart(options: RuntimeOptions): Promise<void> {
                 reply = await runCodexForReply(senderId, input, execOptions);
                 appendHistory(options.stateDir, senderId, "user", buildInboundUserMessageText({ messageText: text, mediaFiles }), options.historyLimit);
                 appendHistory(options.stateDir, senderId, "assistant", reply, options.historyLimit);
-                if (route) route.lastWeChatTurnAt = new Date().toISOString();
+                if (route) {
+                  route.lastWeChatTurnAt = new Date().toISOString();
+                  if (route.attachedThreadId) route.sessionCursor = findCodexSessionCursorByThread(route.attachedThreadId) ?? route.sessionCursor;
+                }
                 appendBridgeEvent(options.stateDir, { type: "turn_completed", data: { senderId, projectName, backend: "exec" } });
               } finally {
                 if (route) {
