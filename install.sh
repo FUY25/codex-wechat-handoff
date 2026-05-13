@@ -1,21 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ONBOARD="${CODEX_WECHAT_HANDOFF_ONBOARD:-0}"
+ONBOARD="${CODEX_WECHAT_HANDOFF_ONBOARD:-1}"
 
 usage() {
   cat <<'USAGE'
 Usage:
-  install.sh [--onboard]
+  install.sh [--onboard|--install-only]
 
 Options:
-  --onboard   Install, then run codex-wechat init/setup/doctor/daemon install/status.
-  --help      Show this help.
+  --onboard       Install, then run codex-wechat init/setup/doctor/daemon install/status. This is the default.
+  --install-only  Install CLI and skill without running onboarding.
+  --help          Show this help.
 
 Environment:
   CODEX_WECHAT_HANDOFF_REPO       Git repo URL to install from.
   CODEX_WECHAT_HANDOFF_DIR        Install directory. Default: ~/.codex-wechat-handoff/app
-  CODEX_WECHAT_HANDOFF_ONBOARD=1  Same as --onboard.
+  CODEX_WECHAT_HANDOFF_ONBOARD=0  Same as --install-only.
 USAGE
 }
 
@@ -23,6 +24,9 @@ for arg in "$@"; do
   case "$arg" in
     --onboard)
       ONBOARD=1
+      ;;
+    --install-only)
+      ONBOARD=0
       ;;
     --help|-h)
       usage
@@ -88,8 +92,9 @@ if [ "$ONBOARD" = "1" ]; then
   echo
   echo "Onboarding complete. In WeChat, send /onboarding or /intro."
 else
+  echo "Install-only mode complete."
   echo "Next: codex-wechat init"
   echo "Then: codex-wechat setup"
   echo "Then: codex-wechat doctor"
-  echo "One-line onboarding: curl -fsSL https://raw.githubusercontent.com/FUY25/codex-wechat-handoff/main/install.sh | bash -s -- --onboard"
+  echo "Default onboarding installer: curl -fsSL https://raw.githubusercontent.com/FUY25/codex-wechat-handoff/main/install.sh | bash"
 fi

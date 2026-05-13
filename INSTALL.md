@@ -24,7 +24,7 @@ Run:
 For a fresh install, prefer the one-line onboarding flow:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/FUY25/codex-wechat-handoff/main/install.sh | bash -s -- --onboard
+curl -fsSL https://raw.githubusercontent.com/FUY25/codex-wechat-handoff/main/install.sh | bash
 ```
 
 That installs the CLI and skill, then runs `codex-wechat init`, `codex-wechat setup`, `codex-wechat doctor`, `codex-wechat daemon install`, and `codex-wechat daemon status`.

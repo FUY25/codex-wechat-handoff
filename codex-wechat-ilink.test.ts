@@ -822,13 +822,16 @@ describe("cli and skill packaging", () => {
     const install = readFileSync(path.join(import.meta.dir, "install.sh"), "utf-8");
     const readme = readFileSync(path.join(import.meta.dir, "README.md"), "utf-8");
 
+    expect(install).toContain('ONBOARD="${CODEX_WECHAT_HANDOFF_ONBOARD:-1}"');
     expect(install).toContain("--onboard");
+    expect(install).toContain("--install-only");
     expect(install).toContain("codex-wechat init");
     expect(install).toContain("codex-wechat setup");
     expect(install).toContain("codex-wechat doctor");
     expect(install).toContain("codex-wechat daemon install");
     expect(install).toContain("codex-wechat daemon status");
-    expect(readme).toContain("bash -s -- --onboard");
+    expect(readme).toContain("install.sh | bash");
+    expect(readme).toContain("bash -s -- --install-only");
   });
 
   test("send-file CLI supports dry-run without account credentials", () => {
