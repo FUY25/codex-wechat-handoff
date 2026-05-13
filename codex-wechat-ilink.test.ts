@@ -630,6 +630,9 @@ describe("stage 1-6 carry-over plan", () => {
     expect(result.notification).toContain("permission: write");
     expect(result.notification).toContain("writes only inside the project cwd");
     expect(result.notification).toContain("model: gpt-5.4-mini");
+    expect(result.notification).toContain("现在请在微信继续");
+    expect(result.notification).toContain("电脑端先不要继续发消息");
+    expect(result.notification).toContain("pull WeChat back");
     expect(state.senders["sender-a"].routes?.vibelight).toMatchObject({
       attachedThreadId: "desktop-thread",
       leaseState: "wechat_active",
@@ -819,6 +822,7 @@ describe("cli and skill packaging", () => {
     expect(skill).toContain("codex-wechat carry-current");
     expect(skill).toContain("codex-wechat pull --project current");
     expect(skill).toContain("codex-wechat project add");
+    expect(skill).toContain("handoff lease");
   });
 
   test("install script exposes a one-line onboarding flow", () => {

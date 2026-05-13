@@ -62,6 +62,8 @@ continue from here
 
 After that, replies from WeChat continue the same Codex thread. The active project, mode, and thread id are tracked per WeChat sender.
 
+Treat carry-over as a handoff lease, not a two-surface live session. Once the carry notification arrives, continue from WeChat. If you type into the same Codex Desktop thread before pulling back, the bridge cannot intercept that Desktop turn and the mobile delta can become confusing. When you return to the computer, pull the WeChat continuation back first.
+
 When you return to the computer, tell Codex:
 
 ```text

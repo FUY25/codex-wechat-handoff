@@ -1275,8 +1275,10 @@ export function carryCurrentToWeChat(
     `permission: ${describeModePermission(mode)}`,
     `model: ${model}`,
     "",
+    "现在请在微信继续；电脑端先不要继续发消息。",
+    "如果已经回到电脑，先对 Codex 说：pull WeChat back。",
+    "",
     "直接回复就从这里继续。",
-    "回电脑后，对 Codex 说：pull WeChat back。",
     "CLI fallback：codex-wechat pull --project current。",
     "也可以先在手机发 /back。",
   ].join("\n");
