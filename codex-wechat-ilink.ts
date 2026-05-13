@@ -208,7 +208,27 @@ export type SenderProjectRoute = RouteRuntimeState & {
   lastMobilePullCursor?: CodexSessionCursor;
   desktopBaselineCursor?: CodexSessionCursor;
   pendingDesktopTranscript?: string | null;
+  pendingMobileTranscript?: string | null;
+  pendingMobileTranscriptCursor?: CodexSessionCursor | null;
+  needsReconcile?: boolean;
   desktopActivityDetectedAt?: string | null;
+};
+
+export type FinishRunOffer = {
+  threadId: string;
+  projectName: string;
+  cwd: string;
+  mode: BridgeMode;
+  model?: string;
+  message?: string;
+  createdAt: string;
+  sessionCursor?: CodexSessionCursor;
+  needsMobilePull?: boolean;
+};
+
+export type FinishNotificationState = {
+  enabled?: boolean;
+  pendingOffer?: FinishRunOffer | null;
 };
 
 export type SenderState = {
@@ -216,6 +236,7 @@ export type SenderState = {
   activeMode?: StoredBridgeMode;
   projectModels?: Record<string, string>;
   routes?: Record<string, SenderProjectRoute>;
+  finishNotifications?: FinishNotificationState;
   lastSeenAt?: string;
   sessions: Record<string, SenderProjectSession>;
 };
@@ -237,8 +258,10 @@ export type BridgeCommand =
   | { type: "attach"; target: string }
   | { type: "back" }
   | { type: "resume" }
+  | { type: "continue" }
   | { type: "detach" }
   | { type: "history"; count: number }
+  | { type: "notify"; action: "on" | "off" | "status" }
   | { type: "onboarding" }
   | { type: "intro" }
   | { type: "help" }
@@ -1415,6 +1438,209 @@ function findRouteByThread(
   return null;
 }
 
+function finishNotificationsFor(sender: SenderState): FinishNotificationState {
+  sender.finishNotifications ??= {};
+  return sender.finishNotifications;
+}
+
+export function isFinishNotificationEnabled(state: BridgeState, senderId: string): boolean {
+  return Boolean(senderState(state, senderId).finishNotifications?.enabled);
+}
+
+export function setFinishNotificationEnabled(state: BridgeState, senderId: string, enabled: boolean): FinishNotificationState {
+  const notifications = finishNotificationsFor(senderState(state, senderId));
+  notifications.enabled = enabled;
+  return notifications;
+}
+
+function transcriptHasRawTurns(transcript: string | null | undefined): boolean {
+  return Boolean(transcript?.trim()) && !transcript.includes("No raw turns recorded in this delta.");
+}
+
+function hasPendingMobileTranscript(route: SenderProjectRoute | undefined): boolean {
+  return transcriptHasRawTurns(route?.pendingMobileTranscript);
+}
+
+export function refreshPendingMobileTranscriptForRoute(
+  state: BridgeState,
+  projects: ProjectRegistry,
+  senderId: string,
+  projectName: string,
+  params: { roots?: string[] } = {},
+): string | null {
+  const sender = senderState(state, senderId);
+  const route = sender.routes?.[projectName];
+  const project = projects.projects[projectName];
+  if (!route?.mobileThreadId || !route.attachedThreadId || !project) return null;
+
+  const mode = normalizeStoredMode(sender.sessions[projectName]?.mode ?? sender.activeMode, project.defaultMode);
+  const model = activeModel(state, projects, senderId, projectName) ?? "default";
+  const baseline = route.lastMobilePullCursor ?? route.mobileStartCursor;
+  const transcript = buildRawTranscriptFromCodexSession({
+    threadId: route.mobileThreadId,
+    cursor: baseline,
+    roots: baseline || params.roots ? params.roots : [],
+    title: "Pending WeChat raw transcript",
+    direction: "mobile_to_desktop",
+    projectName,
+    cwd: project.cwd,
+    mode,
+    model,
+    desktopThreadId: route.attachedThreadId,
+    mobileThreadId: route.mobileThreadId,
+  });
+  if (!transcriptHasRawTurns(transcript)) return route.pendingMobileTranscript ?? null;
+
+  const currentCursor = baseline?.file
+    ? cursorFromRolloutPath(route.mobileThreadId, baseline.file)
+    : params.roots
+      ? findCodexSessionCursorByThread(route.mobileThreadId, params.roots)
+      : findCodexSessionCursorByThread(route.mobileThreadId);
+  route.pendingMobileTranscript = transcript;
+  if (currentCursor) route.pendingMobileTranscriptCursor = currentCursor;
+  return transcript;
+}
+
+export function buildFinishRunNotification(offer: FinishRunOffer): string {
+  return [
+    "Codex run 完成。",
+    ...(offer.message?.trim() ? [offer.message.trim()] : []),
+    "",
+    `project: ${offer.projectName}`,
+    `cwd: ${offer.cwd}`,
+    `thread: ${offer.threadId}`,
+    `mode: ${offer.mode}`,
+    `permission: ${describeModePermission(offer.mode)}`,
+    `model: ${offer.model ?? "default"}`,
+    "",
+    ...(offer.needsMobilePull
+      ? [
+          "注意：存在未 pull 的手机 raw transcript。",
+          "先在电脑运行 pull WeChat back，再继续 Desktop；否则 Desktop context 不含手机期间内容。",
+          "",
+        ]
+      : []),
+    "要从手机继续，回复 /continue。",
+    "不回复就不会接管手机；微信会保持之前的 project/session state。",
+  ].join("\n");
+}
+
+export function recordFinishRunOffer(
+  state: BridgeState,
+  projects: ProjectRegistry,
+  params: {
+    senderId: string;
+    projectName: string;
+    threadId: string;
+    mode?: BridgeMode;
+    model?: string;
+    message?: string;
+    now?: string;
+    sessionCursor?: CodexSessionCursor;
+  },
+): { offer: FinishRunOffer; notification: string } {
+  const sender = senderState(state, params.senderId);
+  const project = projects.projects[params.projectName];
+  if (!project) throw new Error(`Unknown project: ${params.projectName}`);
+  const foundRoute = findRouteByThread(state, params.threadId, params.projectName);
+  const mode = normalizeStoredMode(params.mode ?? sender.activeMode ?? sender.sessions[params.projectName]?.mode, project.defaultMode);
+  const model = params.model ?? activeModel(state, projects, params.senderId, params.projectName);
+  const offer: FinishRunOffer = {
+    threadId: params.threadId,
+    projectName: params.projectName,
+    cwd: project.cwd,
+    mode,
+    model,
+    message: params.message,
+    createdAt: params.now ?? new Date().toISOString(),
+    sessionCursor: params.sessionCursor,
+    needsMobilePull: Boolean(foundRoute?.route.needsReconcile || hasPendingMobileTranscript(foundRoute?.route)),
+  };
+  finishNotificationsFor(sender).pendingOffer = offer;
+  return { offer, notification: buildFinishRunNotification(offer) };
+}
+
+export function continueFinishRunOfferToWeChat(
+  state: BridgeState,
+  projects: ProjectRegistry,
+  senderId: string,
+  params: {
+    mobileThreadId?: string;
+    mobileStartCursor?: CodexSessionCursor;
+    roots?: string[];
+    now?: string;
+  } = {},
+): { handled: true; reply: string; projectName?: string; desktopThreadId?: string; mobileThreadId?: string } {
+  const sender = senderState(state, senderId);
+  const offer = sender.finishNotifications?.pendingOffer;
+  if (!offer) return { handled: true, reply: "当前没有可继续到手机的 finish notification。" };
+  const project = projects.projects[offer.projectName];
+  if (!project) {
+    sender.finishNotifications!.pendingOffer = null;
+    return { handled: true, reply: `finish notification 的 project 已不存在: ${offer.projectName}` };
+  }
+
+  const route = sender.routes?.[offer.projectName];
+  if (route?.attachedThreadId === offer.threadId && route.leaseState !== "wechat_active") {
+    const resumed = resumeRouteToWeChat(state, projects, senderId, { roots: params.roots, now: params.now });
+    sender.finishNotifications!.pendingOffer = null;
+    return {
+      handled: true,
+      reply: [
+        "已从 finish notification 回到手机。",
+        resumed.reply,
+        ...(offer.needsMobilePull ? ["注意：Desktop 刚才那轮可能没有手机上下文；手机继续时会带入 Desktop raw delta 做 reconcile。"] : []),
+      ].join("\n"),
+      projectName: offer.projectName,
+      desktopThreadId: offer.threadId,
+      mobileThreadId: route.mobileThreadId,
+    };
+  }
+
+  if (route?.attachedThreadId === offer.threadId && route.leaseState === "wechat_active") {
+    sender.finishNotifications!.pendingOffer = null;
+    return {
+      handled: true,
+      reply: "这条 thread 已经在手机 remote mode。\n直接发消息就继续。",
+      projectName: offer.projectName,
+      desktopThreadId: offer.threadId,
+      mobileThreadId: route.mobileThreadId,
+    };
+  }
+
+  if (!params.mobileThreadId) {
+    return {
+      handled: true,
+      reply: "要从这个 finish notification 继续到手机，需要 daemon/app-server fork Desktop thread。请确认 bridge 用 app-server backend 运行。",
+      projectName: offer.projectName,
+      desktopThreadId: offer.threadId,
+    };
+  }
+
+  const carry = carryCurrentToWeChat(state, projects, {
+    senderId,
+    projectName: offer.projectName,
+    threadId: offer.threadId,
+    mobileThreadId: params.mobileThreadId,
+    mode: offer.mode,
+    sessionCursor: offer.sessionCursor,
+    mobileStartCursor: params.mobileStartCursor,
+    now: params.now,
+  });
+  sender.finishNotifications!.pendingOffer = null;
+  return {
+    handled: true,
+    reply: [
+      "已从 finish notification 切到手机继续。",
+      carry.notification,
+      ...(offer.needsMobilePull ? ["注意：Desktop 刚才那轮可能没有手机上下文；手机继续时会带入 mobile context 做 reconcile。"] : []),
+    ].join("\n"),
+    projectName: offer.projectName,
+    desktopThreadId: offer.threadId,
+    mobileThreadId: params.mobileThreadId,
+  };
+}
+
 export function carryCurrentToWeChat(
   state: BridgeState,
   projects: ProjectRegistry,
@@ -1452,6 +1678,9 @@ export function carryCurrentToWeChat(
     mobileStartCursor: params.mobileStartCursor,
     lastMobilePullCursor: null,
     pendingDesktopTranscript: null,
+    pendingMobileTranscript: null,
+    pendingMobileTranscriptCursor: null,
+    needsReconcile: false,
     desktopActivityDetectedAt: null,
   };
   sender.routes ??= {};
@@ -1477,7 +1706,8 @@ export function carryCurrentToWeChat(
     "",
     "现在请在微信继续；电脑端先不要继续发消息。",
     "如果电脑端继续发消息，微信 remote mode 会自动暂停。",
-    "如果已经回到电脑，先对 Codex 说：pull WeChat back。",
+    "回电脑后第一句话请说：pull WeChat back，然后再继续任务。",
+    "如果跳过 pull 直接在电脑继续，Desktop context 不含手机期间内容。",
     "",
     "直接回复就从这里继续。",
     "CLI fallback：codex-wechat pull --project current。",
@@ -1486,10 +1716,17 @@ export function carryCurrentToWeChat(
   return { notification, route };
 }
 
-function buildDesktopActivityPauseNotification(params: { projectName: string; threadId: string }): string {
+function buildDesktopActivityPauseNotification(params: { projectName: string; threadId: string; needsReconcile?: boolean }): string {
   return [
     "检测到电脑端已经继续这个 Codex thread。",
     "微信 remote mode 已自动暂停。",
+    ...(params.needsReconcile
+      ? [
+          "",
+          "注意：这轮 Desktop 可能没有手机上下文。",
+          "请回电脑运行 pull WeChat back 做 reconcile，然后再继续任务。",
+        ]
+      : []),
     "",
     `project: ${params.projectName}`,
     `thread: ${params.threadId}`,
@@ -1500,10 +1737,12 @@ function buildDesktopActivityPauseNotification(params: { projectName: string; th
   ].join("\n");
 }
 
-function notifyDesktopRemotePaused(params: { projectName: string; threadId: string }): void {
+function notifyDesktopRemotePaused(params: { projectName: string; threadId: string; needsReconcile?: boolean }): void {
   if (process.platform !== "darwin") return;
   const title = "WeChat remote paused";
-  const body = `Desktop continued ${params.projectName}; WeChat remote paused. Carry again to resume from phone.`;
+  const body = params.needsReconcile
+    ? `WeChat context pending. Run pull WeChat back before continuing. Project: ${params.projectName}`
+    : `Desktop continued ${params.projectName}; WeChat remote paused.`;
   try {
     Bun.spawn(["osascript", "-e", `display notification ${JSON.stringify(body)} with title ${JSON.stringify(title)}`], {
       stdout: "ignore",
@@ -1547,8 +1786,8 @@ function hasUserMessageAfterCursor(previous: CodexSessionCursor, current: CodexS
 export function pauseWechatRoutesForDesktopActivity(
   state: BridgeState,
   params: { roots?: string[]; now?: string } = {},
-): Array<{ senderId: string; projectName: string; threadId: string; notification: string }> {
-  const pauses: Array<{ senderId: string; projectName: string; threadId: string; notification: string }> = [];
+): Array<{ senderId: string; projectName: string; threadId: string; notification: string; needsReconcile: boolean }> {
+  const pauses: Array<{ senderId: string; projectName: string; threadId: string; notification: string; needsReconcile: boolean }> = [];
   const now = params.now ?? new Date().toISOString();
   for (const [senderId, sender] of Object.entries(state.senders)) {
     for (const [projectName, route] of Object.entries(sender.routes ?? {})) {
@@ -1560,7 +1799,9 @@ export function pauseWechatRoutesForDesktopActivity(
         route.sessionCursor = current;
         continue;
       }
+      const needsReconcile = hasPendingMobileTranscript(route);
       route.desktopBaselineCursor = route.sessionCursor;
+      route.needsReconcile = needsReconcile;
       route.leaseState = "desktop_active";
       route.activeSurface = "desktop";
       route.desktopActivityDetectedAt = now;
@@ -1569,7 +1810,8 @@ export function pauseWechatRoutesForDesktopActivity(
         senderId,
         projectName,
         threadId: route.attachedThreadId,
-        notification: buildDesktopActivityPauseNotification({ projectName, threadId: route.attachedThreadId }),
+        notification: buildDesktopActivityPauseNotification({ projectName, threadId: route.attachedThreadId, needsReconcile }),
+        needsReconcile,
       });
     }
   }
@@ -1714,6 +1956,9 @@ export function pullCurrentToDesktop(
   found.route.lastDesktopPullAt = params.now ?? new Date().toISOString();
   found.route.desktopBaselineCursor = desktopBaselineCursor;
   if (mobileCursor) found.route.lastMobilePullCursor = mobileCursor;
+  found.route.pendingMobileTranscript = null;
+  found.route.pendingMobileTranscriptCursor = null;
+  found.route.needsReconcile = false;
   const notification = [
     "已切回电脑继续。",
     `project: ${found.projectName}`,
@@ -1742,6 +1987,8 @@ export function buildOnboardingMessage(): string {
     "6. 回电脑后，对 Codex 说：pull WeChat back",
     "   CLI fallback：codex-wechat pull --project current",
     "7. pull 会把手机期间的 raw transcript 带回当前 Desktop chat，不做 summary。",
+    "重要：回电脑后第一句话请先说 pull WeChat back，然后再继续任务；否则 Desktop 那一轮不会包含手机期间的上下文。",
+    "手机期间每轮完成后，bridge 只缓存 pending raw transcript，不会后台写 Desktop thread。",
     "",
     "Project/session binding：",
     "默认 inbox 是微信专用的安全起点，一般放在 ~/.codex-wechat-handoff/workspaces/inbox。",
@@ -1766,6 +2013,8 @@ export function buildOnboardingMessage(): string {
     "/status 查看当前 thread",
     "/new 开一个新的手机侧 project session；Desktop carry-over 中会被拦截。",
     "/stop 查看当前停止能力；安全 interrupt 还在开发中。",
+    "/notify on|off|status 开关 finish-run 微信提醒。",
+    "/continue 从 finish-run 提醒接管到手机；忽略提醒不会改变当前微信 state。",
     "/help 查看全部命令",
     "",
     "长线程说明：Desktop thread 和 mobile thread 都可能按 Codex 自己的规则 compact；bridge 在切换方向时用 raw transcript delta 交接上下文。",
@@ -1813,8 +2062,10 @@ const SLASH_COMMANDS = [
   "/switch",
   "/back",
   "/resume",
+  "/continue",
   "/detach",
   "/history",
+  "/notify",
   "/onboarding",
   "/intro",
   "/help",
@@ -1861,6 +2112,9 @@ function parseNaturalBridgeIntent(trimmed: string): BridgeCommand | null {
   }
   if (["继续手机remote", "继续手机", "手机继续", "resumeremote"].includes(compact)) {
     return { type: "resume" };
+  }
+  if (["继续到手机", "从手机继续", "continuefromphone", "continue"].includes(compact)) {
+    return { type: "continue" };
   }
   if (["退出carry-over", "退出carryover", "回默认会话", "结束handoff", "detach"].includes(compact)) {
     return { type: "detach" };
@@ -1993,11 +2247,18 @@ export function parseBridgeCommand(text: string): BridgeCommand {
   }
   if (command === "/back") return { type: "back" };
   if (command === "/resume") return { type: "resume" };
+  if (command === "/continue") return { type: "continue" };
   if (command === "/detach") return { type: "detach" };
   if (command === "/history") {
     const count = arg ? Number(arg) : 10;
     if (!Number.isInteger(count) || count <= 0) return { type: "error", message: "Usage: /history [positive_number]" };
     return { type: "history", count };
+  }
+  if (command === "/notify") {
+    const normalized = arg.toLowerCase();
+    if (!normalized || normalized === "status") return { type: "notify", action: "status" };
+    if (normalized === "on" || normalized === "off") return { type: "notify", action: normalized };
+    return { type: "error", message: "Usage: /notify on|off|status" };
   }
   if (command === "/onboarding") return { type: "onboarding" };
   if (command === "/intro") return { type: "intro" };
@@ -2040,6 +2301,26 @@ export function applyBridgeCommand(
   const sender = senderState(state, senderId);
 
   if (command.type === "error") return { handled: true, reply: command.message };
+
+  if (command.type === "notify") {
+    if (command.action === "on") {
+      setFinishNotificationEnabled(state, senderId, true);
+      return { handled: true, reply: "finish-run 微信提醒：on\n任务结束提醒会发到这里；回复 /continue 才会接管手机。" };
+    }
+    if (command.action === "off") {
+      setFinishNotificationEnabled(state, senderId, false);
+      return { handled: true, reply: "finish-run 微信提醒：off\n之后 hook 不会主动发任务完成提醒。" };
+    }
+    const notifications = sender.finishNotifications;
+    return {
+      handled: true,
+      reply: [
+        `finish-run 微信提醒：${notifications?.enabled ? "on" : "off"}`,
+        `pending_continue: ${notifications?.pendingOffer ? "yes" : "no"}`,
+        "回复 /continue 只会在有 pending finish notification 时接管手机；不回复则保持当前微信 state。",
+      ].join("\n"),
+    };
+  }
 
   if (command.type === "projects") {
     const names = Object.entries(projects.projects)
@@ -2173,6 +2454,10 @@ export function applyBridgeCommand(
     return resumeRouteToWeChat(state, projects, senderId);
   }
 
+  if (command.type === "continue") {
+    return continueFinishRunOfferToWeChat(state, projects, senderId);
+  }
+
   if (command.type === "detach") {
     if (!route?.attachedThreadId) return { handled: true, reply: "当前没有 Desktop carry-over 可以退出。" };
     if (route.parkedThreadId) {
@@ -2205,6 +2490,7 @@ export function applyBridgeCommand(
         "/intro /onboarding",
         "/current /sessions /attach latest|<id>",
         "/back /resume /detach",
+        "/notify on|off|status /continue",
         "/projects /project <name>",
         "/mode read|write|fullaccess",
         "/model <name|default>",
@@ -4030,6 +4316,91 @@ async function commandPullCurrent(options: RuntimeOptions, args: Args): Promise<
   console.log(result.delta);
 }
 
+async function commandNotifyFinish(options: RuntimeOptions, args: Args): Promise<void> {
+  const subcommand = String(args._[1] ?? "status").toLowerCase();
+  const projects = loadProjectRegistry({
+    workspace: options.workspace,
+    projectsConfig: loadProjectsConfig(options.projectsFile),
+  });
+  const state = loadBridgeState(options.stateDir);
+  const toArg = typeof args.to === "string" ? args.to : "last";
+  const senderId = resolveTargetSender(state, options.stateDir, toArg);
+
+  if (subcommand === "on" || subcommand === "off") {
+    const enabled = subcommand === "on";
+    setFinishNotificationEnabled(state, senderId, enabled);
+    saveBridgeState(options.stateDir, state);
+    appendBridgeEvent(options.stateDir, { type: "finish_notify_toggled", data: { senderId, enabled } });
+    console.log(`finish_notify: ${enabled ? "on" : "off"}`);
+    console.log(`sender: ${senderId}`);
+    return;
+  }
+
+  if (subcommand === "status") {
+    const notifications = senderState(state, senderId).finishNotifications;
+    console.log(`finish_notify: ${notifications?.enabled ? "on" : "off"}`);
+    console.log(`sender: ${senderId}`);
+    console.log(`pending_continue: ${notifications?.pendingOffer ? "yes" : "no"}`);
+    return;
+  }
+
+  if (subcommand !== "send") {
+    throw new Error("Unknown notify-finish command. Use on, off, status, or send.");
+  }
+
+  if (!isFinishNotificationEnabled(state, senderId)) {
+    console.log("finish_notify: off");
+    console.log("not sent");
+    return;
+  }
+
+  const projectName = resolveProjectName(projects, {
+    requested: typeof args.project === "string" ? args.project : "current",
+    cwd: options.workspace,
+  });
+  const project = projects.projects[projectName];
+  const mode = normalizeMode(typeof args.mode === "string" ? args.mode : "") ?? activeMode(state, projects, senderId);
+  const model = typeof args.model === "string" ? args.model : activeModel(state, projects, senderId, projectName) ?? options.codexModel;
+  const threadId = typeof args["thread-id"] === "string" ? args["thread-id"] : readCurrentCodexThreadId();
+  const message = typeof args.message === "string" ? args.message : "";
+  const workingState: BridgeState = options.dryRun ? JSON.parse(JSON.stringify(state)) : state;
+  const result = recordFinishRunOffer(workingState, projects, {
+    senderId,
+    projectName,
+    threadId,
+    mode,
+    model,
+    message,
+    sessionCursor: options.dryRun ? undefined : findCodexSessionCursorByThread(threadId) ?? undefined,
+  });
+
+  if (options.dryRun) {
+    console.log("dry-run: would send finish notification");
+    console.log(`to: ${senderId}`);
+    console.log(result.notification);
+    return;
+  }
+
+  saveBridgeState(options.stateDir, state);
+  appendBridgeEvent(options.stateDir, {
+    type: "finish_notification_offered",
+    data: { senderId, projectName, threadId, needsMobilePull: result.offer.needsMobilePull ?? false },
+  });
+  const account = loadAccount(options.stateDir);
+  const sendResult = await sendProactiveText({
+    account,
+    stateDir: options.stateDir,
+    senderId,
+    text: result.notification,
+    context: "finish_notice",
+    dryRun: options.dryRun,
+  });
+  console.log(sendResult.sent ? "finish notification sent" : `finish notification not sent: ${sendResult.reason ?? "unknown"}`);
+  console.log(`project: ${projectName}`);
+  console.log(`cwd: ${project.cwd}`);
+  console.log(`thread: ${threadId}`);
+}
+
 async function commandSendFile(options: RuntimeOptions, args: Args): Promise<void> {
   const rawFile = optionString(args, "file", args._[1] ?? "");
   if (!rawFile) throw new Error("send-file 需要 --file PATH。");
@@ -4296,7 +4667,7 @@ async function commandStart(options: RuntimeOptions): Promise<void> {
             type: "lease_changed",
             data: { senderId: pause.senderId, projectName: pause.projectName, threadId: pause.threadId, leaseState: "desktop_active" },
           });
-          notifyDesktopRemotePaused({ projectName: pause.projectName, threadId: pause.threadId });
+          notifyDesktopRemotePaused({ projectName: pause.projectName, threadId: pause.threadId, needsReconcile: pause.needsReconcile });
           try {
             const sendResult = await sendProactiveText({
               account,
@@ -4403,6 +4774,41 @@ async function commandStart(options: RuntimeOptions): Promise<void> {
                 lastMessageAt,
                 lastError,
               });
+            } else if (parsed.type === "continue") {
+              const pendingOffer = senderState(bridgeState, senderId).finishNotifications?.pendingOffer;
+              let fork: AppServerForkResult | null = null;
+              if (pendingOffer) {
+                const pendingRoute = senderState(bridgeState, senderId).routes?.[pendingOffer.projectName];
+                const canUseExistingRoute = pendingRoute?.attachedThreadId === pendingOffer.threadId;
+                if (!canUseExistingRoute && appServer) {
+                  fork = await appServer.forkThread({
+                    threadId: pendingOffer.threadId,
+                    cwd: pendingOffer.cwd,
+                    mode: pendingOffer.mode,
+                    model: pendingOffer.model,
+                    projectName: pendingOffer.projectName,
+                  });
+                }
+              }
+              const commandResult = continueFinishRunOfferToWeChat(bridgeState, projects, senderId, {
+                mobileThreadId: fork?.threadId,
+                mobileStartCursor: fork?.cursor,
+              });
+              saveBridgeState(options.stateDir, bridgeState);
+              reply = commandResult.reply;
+              replyProjectName = commandResult.projectName ?? eventProjectName;
+              replyThreadId = commandResult.mobileThreadId ?? commandResult.desktopThreadId ?? eventThreadId;
+              if (commandResult.projectName || commandResult.desktopThreadId || commandResult.mobileThreadId) {
+                appendBridgeEvent(options.stateDir, {
+                  type: "finish_continue_requested",
+                  data: {
+                    senderId,
+                    projectName: commandResult.projectName,
+                    threadId: commandResult.desktopThreadId,
+                    mobileThreadId: commandResult.mobileThreadId,
+                  },
+                });
+              }
             } else {
               const commandResult = applyBridgeCommand(bridgeState, projects, senderId, parsed);
               saveBridgeState(options.stateDir, bridgeState);
@@ -4420,7 +4826,9 @@ async function commandStart(options: RuntimeOptions): Promise<void> {
             if (disposition.action === "block") {
               reply =
                 disposition.reason === "desktop_active"
-                  ? "这条 Codex thread 现在在 Desktop active。要从手机继续，发 /resume。"
+                  ? route?.needsReconcile
+                    ? "这条 Codex thread 现在在 Desktop active，且存在未 pull 的手机上下文。请先回电脑运行 pull WeChat back 做 reconcile；要强行从手机继续，发 /resume。"
+                    : "这条 Codex thread 现在在 Desktop active。要从手机继续，发 /resume。"
                   : "这条 Codex thread 正在等待 Desktop pull。要从手机继续，发 /resume；要退出 carry-over，发 /detach。";
               replyContext = "command_reply";
             } else if (disposition.action === "queue") {
@@ -4471,6 +4879,7 @@ async function commandStart(options: RuntimeOptions): Promise<void> {
                     cwd: project.cwd,
                     mode,
                   };
+                  refreshPendingMobileTranscriptForRoute(bridgeState, projects, senderId, projectName);
                 } else {
                   sender.sessions[projectName] = {
                     threadId: run.threadId,
@@ -4510,6 +4919,7 @@ async function commandStart(options: RuntimeOptions): Promise<void> {
                 if (route) {
                   route.lastWeChatTurnAt = new Date().toISOString();
                   if (route.mobileThreadId) route.mobileStartCursor ??= findCodexSessionCursorByThread(route.mobileThreadId) ?? undefined;
+                  refreshPendingMobileTranscriptForRoute(bridgeState, projects, senderId, projectName);
                 }
                 appendBridgeEvent(options.stateDir, { type: "turn_completed", data: { senderId, projectName, backend: "exec" } });
               } finally {
@@ -4582,6 +4992,7 @@ Usage:
   codex-wechat carry-current [--project current|NAME] [--to last|SENDER] [--thread-id ID]
   codex-wechat pull-current [--project current|NAME] [--thread-id ID]
   codex-wechat carry-status [--project current|NAME]
+  codex-wechat notify-finish on|off|status|send [--project current|NAME] [--to last|SENDER]
   codex-wechat render-html --html PATH [--pdf PATH] [--png PATH] [--renderer auto|chrome|quicklook]
   codex-wechat send-text --message "..." [--to last|SENDER]
   codex-wechat send-file --file PATH [--to last|SENDER] [--message "..."]
@@ -4621,7 +5032,9 @@ WeChat commands:
   /attach latest|<index>|<thread_id>
   /back
   /resume
+  /continue
   /detach
+  /notify on|off|status
   /intro
   /onboarding
   /history [n]
@@ -4664,6 +5077,8 @@ async function main(): Promise<void> {
     await commandCarryCurrent(options, args);
   } else if (command === "pull-current" || command === "pull") {
     await commandPullCurrent(options, args);
+  } else if (command === "notify-finish") {
+    await commandNotifyFinish(options, args);
   } else if (command === "render-html") {
     await commandRenderHtml(options, args);
   } else if (command === "send-text") {

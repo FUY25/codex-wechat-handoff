@@ -51,6 +51,14 @@ codex-wechat daemon install
 codex-wechat daemon status
 ```
 
+Manage finish-run WeChat notifications:
+
+```bash
+codex-wechat notify-finish status --to last
+codex-wechat notify-finish on --to last
+codex-wechat notify-finish send --project current --to last --message "任务完成。"
+```
+
 Send a local PDF or other file to WeChat for a real smoke test:
 
 ```bash
@@ -73,14 +81,23 @@ When the user says "carry this to WeChat", "continue on phone", or similar:
 1. Run `codex-wechat carry-current --project current --to last`.
 2. Report whether the WeChat notification was sent.
 3. Say that carry-over is a handoff lease: the bridge forks the Desktop thread into a forked mobile session, WeChat writes only the mobile thread, and if Desktop/CLI continues before pull-back, WeChat remote mode auto-pauses until `/resume`, `/detach`, or a fresh carry.
-4. If the output mentions `CODEX_THREAD_ID`, explain that carry must run from inside a Codex Desktop/CLI thread, or use `--thread-id` only for manual testing.
-5. If notification is `not_sent (missing_context_token)`, tell the user to send any message from WeChat first so the bridge can cache a reply context.
+4. Explicitly tell the user: when they return to Desktop, the first message should be `pull WeChat back`, then they can continue the task. If they skip pull and continue on Desktop, that Desktop turn will not include the phone-side raw transcript.
+5. If the output mentions `CODEX_THREAD_ID`, explain that carry must run from inside a Codex Desktop/CLI thread, or use `--thread-id` only for manual testing.
+6. If notification is `not_sent (missing_context_token)`, tell the user to send any message from WeChat first so the bridge can cache a reply context.
 
 When the user says "/wechat pull", "pull WeChat back", "continue from Desktop", or similar:
 
 1. Run `codex-wechat pull --project current`.
 2. Treat the printed `WeChat raw handoff` section as raw transcript context for the current Desktop thread.
 3. Continue from that raw transcript naturally in the current conversation.
+
+At the end of a Desktop/CLI run, if finish-run notifications are enabled or the user asked to be notified on WeChat, run:
+
+```bash
+codex-wechat notify-finish send --project current --to last --message "任务完成。"
+```
+
+The notification is only an offer. The phone takes over only if the user replies `/continue`; ignoring it leaves WeChat in the previous project/session state. If the bridge reports pending mobile context, tell the user to run `pull WeChat back` on Desktop before continuing there.
 
 When the user asks for status:
 
