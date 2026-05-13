@@ -4,9 +4,9 @@ Continue your Codex Desktop coding session from WeChat, then pull it back.
 
 Codex WeChat Handoff connects personal WeChat iLink to Codex app-server. It is built for remote coding handoff: start at your desk, carry the active Codex thread to your phone, continue from WeChat, then return to the same Desktop context.
 
-## Quick Start
+## One-Line Install And Onboarding
 
-Full onboarding one-liner:
+Run this to install, initialize, scan QR, run checks, and start the background listener:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/FUY25/codex-wechat-handoff/main/install.sh | bash -s -- --onboard
@@ -14,7 +14,15 @@ curl -fsSL https://raw.githubusercontent.com/FUY25/codex-wechat-handoff/main/ins
 
 This installs the CLI and skill, creates the default `inbox`, starts QR setup, runs `doctor`, installs the background daemon, and prints daemon status.
 
-Manual flow:
+After QR setup finishes, open WeChat and send:
+
+```text
+/onboarding
+```
+
+## Manual Install
+
+Use this only if you want to run each step yourself:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/FUY25/codex-wechat-handoff/main/install.sh | bash
