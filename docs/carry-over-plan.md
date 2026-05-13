@@ -1,5 +1,7 @@
 # Codex Desktop <-> WeChat Carry-Over Plan
 
+> Superseded by `docs/b-only-raw-handoff-plan.md`. This earlier plan assumed same-thread carry-over. The current product direction is B-only: fork the Desktop thread into a mobile thread, write WeChat turns only to the mobile thread, and pull raw transcript back into the Desktop chat.
+
 ## Core Goal
 
 The core product experience is for someone doing coding work in Codex on a laptop to leave the desk and keep driving the same coding thread from WeChat, then come back to the laptop and continue from Desktop without losing context.

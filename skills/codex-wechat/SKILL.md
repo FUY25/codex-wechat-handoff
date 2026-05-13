@@ -11,22 +11,22 @@ Use the local `codex-wechat` CLI. It is the execution layer; this skill only cho
 
 When helping install this project for a new user, follow `INSTALL.md` in the repository. Lead with the carry-over workflow before generic remote control:
 
-1. Carry the current Codex Desktop session to WeChat.
-2. Continue the same thread from the phone.
-3. Pull the mobile continuation back into Codex Desktop.
+1. Carry the current Codex Desktop session to WeChat by forking it into a forked mobile session.
+2. Continue from the phone in the mobile thread, not by externally writing the live Desktop thread.
+3. Pull the mobile continuation back into Codex Desktop as raw transcript context.
 4. Then explain `/project`, `/mode`, `/model`, `/status`, rich PDFs/images, and daemon management.
 
 Never ask the user to paste tokens, and never print `account.json`.
 
 ## Common Commands
 
-Carry the current Desktop thread to WeChat:
+Carry the current Desktop thread to a forked mobile session in WeChat:
 
 ```bash
 codex-wechat carry-current --project current --to last
 ```
 
-Pull the WeChat continuation back into the current Desktop thread:
+Pull the WeChat continuation back into the current Desktop chat as raw transcript context:
 
 ```bash
 codex-wechat pull --project current
@@ -72,15 +72,15 @@ When the user says "carry this to WeChat", "continue on phone", or similar:
 
 1. Run `codex-wechat carry-current --project current --to last`.
 2. Report whether the WeChat notification was sent.
-3. Say that carry-over is a handoff lease: continue from WeChat now, and if Desktop/CLI continues the same thread before pull-back, WeChat remote mode auto-pauses until `/resume`, `/detach`, or a fresh carry.
+3. Say that carry-over is a handoff lease: the bridge forks the Desktop thread into a forked mobile session, WeChat writes only the mobile thread, and if Desktop/CLI continues before pull-back, WeChat remote mode auto-pauses until `/resume`, `/detach`, or a fresh carry.
 4. If the output mentions `CODEX_THREAD_ID`, explain that carry must run from inside a Codex Desktop/CLI thread, or use `--thread-id` only for manual testing.
 5. If notification is `not_sent (missing_context_token)`, tell the user to send any message from WeChat first so the bridge can cache a reply context.
 
 When the user says "/wechat pull", "pull WeChat back", "continue from Desktop", or similar:
 
 1. Run `codex-wechat pull --project current`.
-2. Treat the printed `Mobile continuation:` section as context for the current Desktop thread.
-3. Continue from that delta naturally in the current conversation.
+2. Treat the printed `WeChat raw handoff` section as raw transcript context for the current Desktop thread.
+3. Continue from that raw transcript naturally in the current conversation.
 
 When the user asks for status:
 
@@ -107,7 +107,7 @@ codex-wechat doctor
 
 For a fresh install, `codex-wechat init` creates the default WeChat-only `inbox` project under `~/.codex-wechat-handoff/workspaces/inbox` in `write` mode. Treat real code projects separately and add them with `project add`, usually in `read` mode first.
 
-Then tell them to use `/projects`, `/project <name>`, and `/status` on mobile. Explain project/session binding clearly: `/project <name>` switches to that project's own mobile session and Codex thread; it does not move the current thread to another cwd. Mode is restored from that project's existing session or default. Only carry-over temporarily attaches the current Desktop thread to WeChat.
+Then tell them to use `/projects`, `/project <name>`, and `/status` on mobile. Explain project/session binding clearly: `/project <name>` switches to that project's own mobile session and Codex thread; it does not move the current thread to another cwd. Mode is restored from that project's existing session or default. Carry-over forks the current Desktop thread into a mobile session and uses raw transcript handoff when switching back.
 
 ## Rich WeChat Output
 

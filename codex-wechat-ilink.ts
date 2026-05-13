@@ -196,6 +196,7 @@ export type CodexSessionCursor = {
 export type SenderProjectRoute = RouteRuntimeState & {
   activeSurface?: "desktop" | "wechat";
   attachedThreadId?: string;
+  mobileThreadId?: string;
   attachedFrom?: "desktop" | "wechat";
   attachedAt?: string;
   parkedThreadId?: string;
@@ -203,6 +204,10 @@ export type SenderProjectRoute = RouteRuntimeState & {
   lastWeChatTurnAt?: string | null;
   pendingDeltaId?: string | null;
   sessionCursor?: CodexSessionCursor;
+  mobileStartCursor?: CodexSessionCursor;
+  lastMobilePullCursor?: CodexSessionCursor;
+  desktopBaselineCursor?: CodexSessionCursor;
+  pendingDesktopTranscript?: string | null;
   desktopActivityDetectedAt?: string | null;
 };
 
@@ -250,6 +255,11 @@ type AppServerSandboxPolicy =
 type AppServerRunResult = {
   threadId: string;
   reply: string;
+};
+
+type AppServerForkResult = {
+  threadId: string;
+  cursor?: CodexSessionCursor;
 };
 
 export type SavedMediaFile = {
@@ -1060,6 +1070,12 @@ export function getOrdinaryWechatMessageDisposition(
   return { action: "allow" };
 }
 
+export function resolveWechatTurnThreadId(route: SenderProjectRoute | undefined, session: SenderProjectSession | undefined): string | undefined {
+  if (route?.mobileThreadId) return route.mobileThreadId;
+  if (route?.attachedThreadId) return undefined;
+  return session?.threadId;
+}
+
 export function enqueueDeferredRouteMessage(route: RouteRuntimeState, message: DeferredRouteMessage): number {
   route.deferredQueue ??= [];
   route.deferredQueue.push(message);
@@ -1137,6 +1153,124 @@ export function recoverFinalReplyFromCodexSessionLogs(
   return null;
 }
 
+function textFromResponseMessagePayload(payload: any): string {
+  if (!payload || typeof payload !== "object") return "";
+  if (Array.isArray(payload.content)) {
+    return payload.content
+      .map((part: any) => (typeof part?.text === "string" ? part.text : ""))
+      .join("")
+      .trim();
+  }
+  if (typeof payload.text === "string") return payload.text.trim();
+  return "";
+}
+
+function extractWechatPromptUserMessage(text: string): string {
+  const marker = "\nUser message:\n";
+  const index = text.indexOf(marker);
+  if (index === -1) return text.trim();
+  return text.slice(index + marker.length).trim();
+}
+
+function truncateForTranscript(text: string, maxChars = 6000): string {
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, maxChars)}\n...[truncated ${text.length - maxChars} chars]`;
+}
+
+function readCodexJsonlDelta(params: { threadId: string; cursor?: CodexSessionCursor; roots?: string[] }): {
+  file?: string;
+  cursor?: CodexSessionCursor;
+  lines: string[];
+} {
+  const cursor = params.cursor?.threadId === params.threadId ? params.cursor : undefined;
+  const current = cursor ?? findCodexSessionCursorByThread(params.threadId, params.roots);
+  if (!current?.file || !existsSync(current.file)) return { lines: [] };
+  const contents = readFileSync(current.file);
+  const start = cursor && cursor.file === current.file ? Math.min(cursor.size, contents.length) : 0;
+  return {
+    file: current.file,
+    cursor: {
+      threadId: current.threadId,
+      file: current.file,
+      size: contents.length,
+      mtimeMs: statSync(current.file).mtimeMs,
+    },
+    lines: contents.subarray(start).toString("utf-8").split(/\r?\n/).filter((line) => line.trim()),
+  };
+}
+
+export function buildRawTranscriptFromCodexSession(params: {
+  threadId: string;
+  cursor?: CodexSessionCursor;
+  roots?: string[];
+  title: string;
+  direction: "mobile_to_desktop" | "desktop_to_mobile";
+  projectName: string;
+  cwd: string;
+  mode: BridgeMode;
+  model?: string;
+  desktopThreadId?: string;
+  mobileThreadId?: string;
+}): string {
+  const delta = readCodexJsonlDelta({ threadId: params.threadId, cursor: params.cursor, roots: params.roots });
+  const userLabel = params.direction === "mobile_to_desktop" ? "WeChat user" : "Desktop user";
+  const assistantLabel = params.direction === "mobile_to_desktop" ? "Codex mobile" : "Codex desktop";
+  const body: string[] = [];
+
+  for (const line of delta.lines) {
+    let entry: any;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (entry.type !== "response_item") continue;
+    const payload = entry.payload;
+    if (!payload || typeof payload !== "object") continue;
+    const at = typeof entry.timestamp === "string" ? entry.timestamp : "unknown time";
+
+    if (payload.type === "message") {
+      const role = payload.role;
+      const text = textFromResponseMessagePayload(payload);
+      if (!text) continue;
+      if (role === "user") {
+        body.push(`[${at}] ${userLabel}:\n${truncateForTranscript(extractWechatPromptUserMessage(text))}`);
+      } else if (role === "assistant") {
+        body.push(`[${at}] ${assistantLabel}:\n${truncateForTranscript(text)}`);
+      }
+      continue;
+    }
+
+    if (payload.type === "function_call") {
+      const name = typeof payload.name === "string" ? payload.name : "tool";
+      const args = typeof payload.arguments === "string" ? payload.arguments : JSON.stringify(payload.arguments ?? {});
+      body.push(`[${at}] Tool call:\n${name} ${truncateForTranscript(args, 2000)}`);
+      continue;
+    }
+
+    if (payload.type === "function_call_output") {
+      const output = typeof payload.output === "string" ? payload.output : JSON.stringify(payload.output ?? "");
+      body.push(`[${at}] Tool output:\n${truncateForTranscript(output)}`);
+    }
+  }
+
+  const header = [
+    params.title,
+    "",
+    ...(params.desktopThreadId ? [`desktop thread: ${params.desktopThreadId}`] : []),
+    ...(params.mobileThreadId ? [`mobile thread: ${params.mobileThreadId}`] : []),
+    `project: ${params.projectName}`,
+    `cwd: ${params.cwd}`,
+    `mode: ${params.mode}`,
+    `model: ${params.model ?? "default"}`,
+    ...(delta.file ? [`rollout: ${delta.file}`] : []),
+    "",
+    params.direction === "mobile_to_desktop" ? "--- raw mobile turns ---" : "--- raw desktop turns ---",
+    "",
+  ];
+  return [...header, ...(body.length ? body : ["No raw turns recorded in this delta."])].join("\n");
+}
+
 export type CodexSessionSummary = {
   threadId: string;
   cwd: string;
@@ -1187,6 +1321,17 @@ function cursorFromCodexSessionSummary(summary: CodexSessionSummary): CodexSessi
   return {
     threadId: summary.threadId,
     file: summary.file,
+    size: stats.size,
+    mtimeMs: stats.mtimeMs,
+  };
+}
+
+function cursorFromRolloutPath(threadId: string, filePath: string | undefined): CodexSessionCursor | undefined {
+  if (!filePath || !existsSync(filePath)) return undefined;
+  const stats = statSync(filePath);
+  return {
+    threadId,
+    file: filePath,
     size: stats.size,
     mtimeMs: stats.mtimeMs,
   };
@@ -1273,7 +1418,16 @@ function findRouteByThread(
 export function carryCurrentToWeChat(
   state: BridgeState,
   projects: ProjectRegistry,
-  params: { senderId: string; projectName: string; threadId: string; now?: string; mode?: BridgeMode; sessionCursor?: CodexSessionCursor },
+  params: {
+    senderId: string;
+    projectName: string;
+    threadId: string;
+    mobileThreadId?: string;
+    now?: string;
+    mode?: BridgeMode;
+    sessionCursor?: CodexSessionCursor;
+    mobileStartCursor?: CodexSessionCursor;
+  },
 ): { notification: string; route: SenderProjectRoute } {
   const project = projects.projects[params.projectName];
   if (!project) throw new Error(`Unknown project: ${params.projectName}`);
@@ -1283,9 +1437,11 @@ export function carryCurrentToWeChat(
   const mode = normalizeStoredMode(params.mode ?? sender.activeMode ?? existingSession?.mode, project.defaultMode);
   sender.activeMode = mode;
   const now = params.now ?? new Date().toISOString();
+  const mobileThreadId = params.mobileThreadId ?? params.threadId;
   const route: SenderProjectRoute = {
     activeSurface: "wechat",
     attachedThreadId: params.threadId,
+    mobileThreadId,
     attachedFrom: "desktop",
     attachedAt: now,
     leaseState: "wechat_active",
@@ -1293,18 +1449,28 @@ export function carryCurrentToWeChat(
     lastDesktopPullAt: null,
     pendingDeltaId: null,
     sessionCursor: params.sessionCursor,
+    mobileStartCursor: params.mobileStartCursor,
+    lastMobilePullCursor: null,
+    pendingDesktopTranscript: null,
     desktopActivityDetectedAt: null,
   };
   sender.routes ??= {};
   sender.routes[params.projectName] = route;
+  sender.sessions[params.projectName] = {
+    threadId: mobileThreadId,
+    cwd: project.cwd,
+    mode,
+  };
   const model = activeModel(state, projects, params.senderId, params.projectName) ?? "default";
   const notification = [
     "continue from here",
     "",
-    "已接到电脑上的 Codex 会话。",
+    "已从电脑上的 Codex 会话 fork 出手机 continuation。",
     `project: ${params.projectName}`,
     `cwd: ${project.cwd}`,
-    `thread: ${params.threadId}`,
+    `desktop thread: ${params.threadId}`,
+    `mobile thread: ${mobileThreadId}`,
+    "handoff: forked mobile session",
     `mode: ${mode}`,
     `permission: ${describeModePermission(mode)}`,
     `model: ${model}`,
@@ -1394,6 +1560,7 @@ export function pauseWechatRoutesForDesktopActivity(
         route.sessionCursor = current;
         continue;
       }
+      route.desktopBaselineCursor = route.sessionCursor;
       route.leaseState = "desktop_active";
       route.activeSurface = "desktop";
       route.desktopActivityDetectedAt = now;
@@ -1407,6 +1574,71 @@ export function pauseWechatRoutesForDesktopActivity(
     }
   }
   return pauses;
+}
+
+export function resumeRouteToWeChat(
+  state: BridgeState,
+  projects: ProjectRegistry,
+  senderId: string,
+  params: { roots?: string[]; now?: string } = {},
+): { handled: true; reply: string } {
+  const sender = senderState(state, senderId);
+  const projectName = activeProjectName(state, projects, senderId);
+  const project = projects.projects[projectName];
+  const route = sender.routes?.[projectName];
+  if (!route?.attachedThreadId) return { handled: true, reply: "当前没有可恢复的 attached thread。" };
+
+  const mode = activeMode(state, projects, senderId);
+  const model = activeModel(state, projects, senderId, projectName) ?? "default";
+  const desktopCursor = route.desktopBaselineCursor ?? route.sessionCursor;
+  if (desktopCursor) {
+    route.pendingDesktopTranscript = buildRawTranscriptFromCodexSession({
+      threadId: route.attachedThreadId,
+      cursor: desktopCursor,
+      roots: params.roots,
+      title: "Desktop raw handoff",
+      direction: "desktop_to_mobile",
+      projectName,
+      cwd: project.cwd,
+      mode,
+      model,
+      desktopThreadId: route.attachedThreadId,
+      mobileThreadId: route.mobileThreadId,
+    });
+    const currentDesktopCursor = cursorFromRolloutPath(route.attachedThreadId, desktopCursor.file)
+      ?? (params.roots ? findCodexSessionCursorByThread(route.attachedThreadId, params.roots) : null);
+    if (currentDesktopCursor) {
+      route.sessionCursor = currentDesktopCursor;
+      route.desktopBaselineCursor = currentDesktopCursor;
+    }
+  }
+
+  route.leaseState = "wechat_active";
+  route.activeSurface = "wechat";
+  return {
+    handled: true,
+    reply: [
+      "已回到手机 remote mode。",
+      `project: ${projectName}`,
+      `desktop thread: ${route.attachedThreadId}`,
+      ...(route.mobileThreadId ? [`mobile thread: ${route.mobileThreadId}`] : []),
+      "电脑期间的 raw transcript 会带进下一条手机消息。",
+      "直接发消息就继续。",
+    ].join("\n"),
+  };
+}
+
+export function consumePendingDesktopTranscript(route: SenderProjectRoute | undefined, userMessage: string): string {
+  const pending = route?.pendingDesktopTranscript?.trim();
+  if (!pending) return userMessage;
+  route.pendingDesktopTranscript = null;
+  return [
+    "Desktop handoff context since phone paused:",
+    pending,
+    "",
+    "New WeChat message:",
+    userMessage,
+  ].join("\n");
 }
 
 export function buildCarryBackDelta(
@@ -1438,27 +1670,50 @@ export function buildCarryBackDelta(
 
 export function pullCurrentToDesktop(
   state: BridgeState,
-  params: { threadId: string; projectName?: string; events: BridgeEvent[]; now?: string; projects?: ProjectRegistry },
+  params: { threadId: string; projectName?: string; events: BridgeEvent[]; now?: string; projects?: ProjectRegistry; roots?: string[] },
 ): { senderId: string; projectName: string; delta: string; notification: string } {
   const found = findRouteByThread(state, params.threadId, params.projectName);
   if (!found) throw new Error(`No WeChat route is attached to thread ${params.threadId}`);
   if (found.route.activeTurn) {
     throw new Error(`WeChat turn is still running for thread ${params.threadId}. Wait for the WeChat reply to finish, then pull again.`);
   }
-  found.route.leaseState = "desktop_active";
-  found.route.activeSurface = "desktop";
-  found.route.lastDesktopPullAt = params.now ?? new Date().toISOString();
-  const delta = buildCarryBackDelta(found.route ? params.events : [], {
-    senderId: found.senderId,
-    projectName: found.projectName,
-    threadId: params.threadId,
-    since: found.route.attachedAt ?? null,
-  });
+  const mobileThreadId = found.route.mobileThreadId ?? found.route.attachedThreadId;
+  if (!mobileThreadId) throw new Error(`No mobile thread is attached to Desktop thread ${params.threadId}`);
   const projectsForRoute = state.senders[found.senderId];
   const projectDefault = params.projects?.projects[found.projectName]?.defaultMode ?? "read";
   const project = params.projects?.projects[found.projectName];
   const mode = normalizeStoredMode(projectsForRoute?.activeMode ?? projectsForRoute?.sessions?.[found.projectName]?.mode, projectDefault);
   const model = projectsForRoute?.projectModels?.[found.projectName] ?? params.projects?.projects[found.projectName]?.model ?? "default";
+  const desktopBaselineCursor = found.route.sessionCursor ?? {
+    threadId: params.threadId,
+    file: "",
+    size: 0,
+    mtimeMs: 0,
+  };
+  const mobileBaselineCursor = found.route.lastMobilePullCursor ?? found.route.mobileStartCursor;
+  const delta = buildRawTranscriptFromCodexSession({
+    threadId: mobileThreadId,
+    cursor: mobileBaselineCursor,
+    roots: mobileBaselineCursor || params.roots ? params.roots : [],
+    title: "WeChat raw handoff",
+    direction: "mobile_to_desktop",
+    projectName: found.projectName,
+    cwd: project?.cwd ?? projectsForRoute?.sessions?.[found.projectName]?.cwd ?? "",
+    mode,
+    model,
+    desktopThreadId: params.threadId,
+    mobileThreadId,
+  });
+  const mobileCursor = mobileBaselineCursor?.file
+    ? cursorFromRolloutPath(mobileThreadId, mobileBaselineCursor.file)
+    : params.roots
+      ? findCodexSessionCursorByThread(mobileThreadId, params.roots)
+      : null;
+  found.route.leaseState = "desktop_active";
+  found.route.activeSurface = "desktop";
+  found.route.lastDesktopPullAt = params.now ?? new Date().toISOString();
+  found.route.desktopBaselineCursor = desktopBaselineCursor;
+  if (mobileCursor) found.route.lastMobilePullCursor = mobileCursor;
   const notification = [
     "已切回电脑继续。",
     `project: ${found.projectName}`,
@@ -1481,10 +1736,12 @@ export function buildOnboardingMessage(): string {
     "核心用法：把电脑上的 Codex 会话带到微信继续。",
     "1. 在 Codex Desktop 里说：carry this to WeChat",
     "2. 或运行：codex-wechat carry-current --project current --to last",
-    "3. 手机微信直接回复，就会继续同一个 Codex thread。",
-    "4. 如果电脑端继续发消息，微信 remote mode 会自动暂停。",
-    "5. 回电脑后，对 Codex 说：pull WeChat back",
+    "3. bridge 会 fork 当前 Desktop thread，创建 forked mobile session；手机只写 mobile thread，不外部写 Desktop thread。",
+    "4. 手机微信直接回复，就从这个 forked mobile session 继续。",
+    "5. 如果电脑端继续发消息，微信 remote mode 会自动暂停。",
+    "6. 回电脑后，对 Codex 说：pull WeChat back",
     "   CLI fallback：codex-wechat pull --project current",
+    "7. pull 会把手机期间的 raw transcript 带回当前 Desktop chat，不做 summary。",
     "",
     "Project/session binding：",
     "默认 inbox 是微信专用的安全起点，一般放在 ~/.codex-wechat-handoff/workspaces/inbox。",
@@ -1492,7 +1749,7 @@ export function buildOnboardingMessage(): string {
     "每个 project 有自己的手机 session / Codex thread；/project <name> 是切到该 project 绑定的独立 session，不是换同一个 thread 的 cwd。",
     "Each project has its own mobile session and Codex thread; /project <name> switches sessions instead of changing one thread's cwd.",
     "When you switch projects, mode follows the target project session or default.",
-    "carry-over 会临时接管电脑上的 Desktop thread。",
+    "carry-over 会把 Desktop thread fork 成手机 session，并用 raw transcript 在切换时交接上下文。",
     "退出 carry-over 后会回到之前的手机 session。",
     "",
     "权限模式：",
@@ -1511,7 +1768,7 @@ export function buildOnboardingMessage(): string {
     "/stop 查看当前停止能力；安全 interrupt 还在开发中。",
     "/help 查看全部命令",
     "",
-    "长线程说明：如果同一个 Codex thread 超过上下文窗口，Codex 可能自动 compact 或摘要历史；bridge 会继续使用同一个 thread id。",
+    "长线程说明：Desktop thread 和 mobile thread 都可能按 Codex 自己的规则 compact；bridge 在切换方向时用 raw transcript delta 交接上下文。",
   ].join("\n");
 }
 
@@ -1913,10 +2170,7 @@ export function applyBridgeCommand(
   }
 
   if (command.type === "resume") {
-    if (!route?.attachedThreadId) return { handled: true, reply: "当前没有可恢复的 attached thread。" };
-    route.leaseState = "wechat_active";
-    route.activeSurface = "wechat";
-    return { handled: true, reply: "已回到手机 remote mode。\n直接发消息就继续刚才的 Codex thread。" };
+    return resumeRouteToWeChat(state, projects, senderId);
   }
 
   if (command.type === "detach") {
@@ -2009,6 +2263,37 @@ function legacySandboxForMode(mode: BridgeMode): string {
   return "danger-full-access";
 }
 
+function wechatDeveloperInstructions(projectName: string): string {
+  return [
+    "You are Codex connected to WeChat through a local bridge.",
+    `Active project: ${projectName}`,
+    "Send concise plain-text final answers suitable for WeChat.",
+    "WeChat replies should feel natural and human, not stiff or robotic.",
+    "Incoming WeChat images and voice files may appear as local paths in the user message; inspect image paths when visual details matter.",
+    "When appropriate, use the imagegen skill to generate images for the user.",
+    "To send an image through WeChat, put a line exactly like: WECHAT_IMAGE: /absolute/path/to/image.png",
+    "To send a voice message through WeChat, put a line exactly like: WECHAT_VOICE: /absolute/path/to/audio.silk playtime_ms=2000",
+  ].join("\n");
+}
+
+export function buildThreadForkParams(params: {
+  threadId: string;
+  cwd: string;
+  mode: BridgeMode;
+  model?: string;
+  projectName: string;
+}): Record<string, unknown> {
+  return {
+    threadId: params.threadId,
+    cwd: params.cwd,
+    approvalPolicy: "never",
+    sandbox: legacySandboxForMode(params.mode),
+    model: params.model ?? null,
+    developerInstructions: wechatDeveloperInstructions(params.projectName),
+    ephemeral: false,
+  };
+}
+
 export function buildWechatTurnInput(params: {
   senderId: string;
   projectName: string;
@@ -2087,6 +2372,29 @@ class CodexAppServerClient {
 
   constructor(private readonly options: RuntimeOptions) {}
 
+  async forkThread(params: {
+    threadId: string;
+    cwd: string;
+    mode: BridgeMode;
+    model?: string;
+    projectName: string;
+  }): Promise<AppServerForkResult> {
+    try {
+      await this.ensureStarted();
+      const response = await this.request("thread/fork", buildThreadForkParams(params));
+      const threadId = response?.thread?.id;
+      if (!threadId) throw new Error("app-server thread/fork did not return a thread id");
+      const rolloutPath = typeof response?.thread?.path === "string" ? response.thread.path : undefined;
+      return {
+        threadId,
+        cursor: cursorFromRolloutPath(threadId, rolloutPath) ?? findCodexSessionCursorByThread(threadId) ?? undefined,
+      };
+    } catch (error) {
+      this.stop();
+      throw error;
+    }
+  }
+
   async runTurn(params: {
     threadId?: string;
     cwd: string;
@@ -2144,16 +2452,7 @@ class CodexAppServerClient {
       ephemeral: false,
       model: params.model ?? this.options.codexModel ?? null,
       sessionStartSource: "startup",
-      developerInstructions: [
-        "You are Codex connected to WeChat through a local bridge.",
-        `Active project: ${params.projectName}`,
-        "Send concise plain-text final answers suitable for WeChat.",
-        "WeChat replies should feel natural and human, not stiff or robotic.",
-        "Incoming WeChat images and voice files may appear as local paths in the user message; inspect image paths when visual details matter.",
-        "When appropriate, use the imagegen skill to generate images for the user.",
-        "To send an image through WeChat, put a line exactly like: WECHAT_IMAGE: /absolute/path/to/image.png",
-        "To send a voice message through WeChat, put a line exactly like: WECHAT_VOICE: /absolute/path/to/audio.silk playtime_ms=2000",
-      ].join("\n"),
+      developerInstructions: wechatDeveloperInstructions(params.projectName),
     });
     const threadId = response?.thread?.id;
     if (!threadId) throw new Error("app-server thread/start did not return a thread id");
@@ -2168,16 +2467,7 @@ class CodexAppServerClient {
       approvalPolicy: "never",
       sandbox: legacySandboxForMode(params.mode),
       model: params.model ?? this.options.codexModel ?? null,
-      developerInstructions: [
-        "You are Codex connected to WeChat through a local bridge.",
-        `Active project: ${params.projectName}`,
-        "Send concise plain-text final answers suitable for WeChat.",
-        "WeChat replies should feel natural and human, not stiff or robotic.",
-        "Incoming WeChat images and voice files may appear as local paths in the user message; inspect image paths when visual details matter.",
-        "When appropriate, use the imagegen skill to generate images for the user.",
-        "To send an image through WeChat, put a line exactly like: WECHAT_IMAGE: /absolute/path/to/image.png",
-        "To send a voice message through WeChat, put a line exactly like: WECHAT_VOICE: /absolute/path/to/audio.silk playtime_ms=2000",
-      ].join("\n"),
+      developerInstructions: wechatDeveloperInstructions(params.projectName),
     });
     const threadId = response?.thread?.id ?? params.threadId;
     return threadId;
@@ -3629,6 +3919,9 @@ async function commandCarryStatus(options: RuntimeOptions, args: Args): Promise<
 }
 
 async function commandCarryCurrent(options: RuntimeOptions, args: Args): Promise<void> {
+  if (options.backend !== "app-server") {
+    throw new Error("B-only handoff requires app-server backend so the Desktop thread can be forked into a mobile thread.");
+  }
   const projects = loadProjectRegistry({
     workspace: options.workspace,
     projectsConfig: loadProjectsConfig(options.projectsFile),
@@ -3640,16 +3933,34 @@ async function commandCarryCurrent(options: RuntimeOptions, args: Args): Promise
   });
   const threadId = typeof args["thread-id"] === "string" ? args["thread-id"] : readCurrentCodexThreadId();
   const senderId = resolveTargetSender(state, options.stateDir, typeof args.to === "string" ? args.to : "last");
+  const project = projects.projects[projectName];
+  const mode = normalizeMode(typeof args.mode === "string" ? args.mode : "") ?? activeMode(state, projects, senderId);
+  const model = activeModel(state, projects, senderId, projectName) ?? options.codexModel;
+  const appServer = new CodexAppServerClient(options);
+  let fork: AppServerForkResult;
+  try {
+    fork = await appServer.forkThread({
+      threadId,
+      cwd: project.cwd,
+      mode,
+      model,
+      projectName,
+    });
+  } finally {
+    appServer.stop();
+  }
   const result = carryCurrentToWeChat(state, projects, {
     senderId,
     projectName,
     threadId,
-    mode: normalizeMode(typeof args.mode === "string" ? args.mode : "") ?? undefined,
+    mobileThreadId: fork.threadId,
+    mode,
     sessionCursor: findCodexSessionCursorByThread(threadId) ?? undefined,
+    mobileStartCursor: fork.cursor ?? findCodexSessionCursorByThread(fork.threadId) ?? undefined,
   });
   saveBridgeState(options.stateDir, state);
-  appendBridgeEvent(options.stateDir, { type: "carry_attached", data: { senderId, projectName, threadId } });
-  appendBridgeEvent(options.stateDir, { type: "lease_changed", data: { senderId, projectName, threadId, leaseState: "wechat_active" } });
+  appendBridgeEvent(options.stateDir, { type: "carry_attached", data: { senderId, projectName, threadId, mobileThreadId: fork.threadId } });
+  appendBridgeEvent(options.stateDir, { type: "lease_changed", data: { senderId, projectName, threadId, mobileThreadId: fork.threadId, leaseState: "wechat_active" } });
 
   let sendResult: { sent: boolean; reason?: string } = { sent: false, reason: "no_account" };
   try {
@@ -4050,7 +4361,7 @@ async function commandStart(options: RuntimeOptions): Promise<void> {
         const eventProjectName = activeProjectName(bridgeState, projects, senderId);
         const eventRoute = routeForProject(bridgeState, senderId, eventProjectName);
         const eventSession = senderState(bridgeState, senderId).sessions[eventProjectName];
-        const eventThreadId = eventRoute?.attachedThreadId ?? eventSession?.threadId ?? null;
+        const eventThreadId = resolveWechatTurnThreadId(eventRoute, eventSession) ?? null;
         appendBridgeEvent(options.stateDir, {
           type: "wechat_message_received",
           data: { senderId, projectName: eventProjectName, threadId: eventThreadId ?? undefined, hasMedia, textPreview: text.slice(0, 120) },
@@ -4127,13 +4438,13 @@ async function commandStart(options: RuntimeOptions): Promise<void> {
               projectName,
               mode,
               model,
-              text: parsed.text || "[WeChat media message]",
+              text: consumePendingDesktopTranscript(route, parsed.text || "[WeChat media message]"),
               mediaFiles,
             });
 
             if (appServer) {
               const existingSession = sender.sessions[projectName];
-              const activeThreadId = route?.attachedThreadId ?? existingSession?.threadId;
+              const activeThreadId = resolveWechatTurnThreadId(route, existingSession);
               replyThreadId = activeThreadId ?? null;
               activeTurn = true;
               activeThread = activeThreadId ?? null;
@@ -4152,9 +4463,14 @@ async function commandStart(options: RuntimeOptions): Promise<void> {
                   projectName,
                 });
                 if (route?.attachedThreadId) {
-                  route.attachedThreadId = run.threadId;
+                  route.mobileThreadId = run.threadId;
                   route.lastWeChatTurnAt = new Date().toISOString();
-                  route.sessionCursor = findCodexSessionCursorByThread(run.threadId) ?? route.sessionCursor;
+                  route.mobileStartCursor ??= findCodexSessionCursorByThread(run.threadId) ?? undefined;
+                  sender.sessions[projectName] = {
+                    threadId: run.threadId,
+                    cwd: project.cwd,
+                    mode,
+                  };
                 } else {
                   sender.sessions[projectName] = {
                     threadId: run.threadId,
@@ -4193,7 +4509,7 @@ async function commandStart(options: RuntimeOptions): Promise<void> {
                 appendHistory(options.stateDir, senderId, "assistant", reply, options.historyLimit);
                 if (route) {
                   route.lastWeChatTurnAt = new Date().toISOString();
-                  if (route.attachedThreadId) route.sessionCursor = findCodexSessionCursorByThread(route.attachedThreadId) ?? route.sessionCursor;
+                  if (route.mobileThreadId) route.mobileStartCursor ??= findCodexSessionCursorByThread(route.mobileThreadId) ?? undefined;
                 }
                 appendBridgeEvent(options.stateDir, { type: "turn_completed", data: { senderId, projectName, backend: "exec" } });
               } finally {
