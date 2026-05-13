@@ -21,13 +21,21 @@ Ask the user for:
 
 Run:
 
-1. `codex-wechat init`
-2. Add allowed real code projects with `codex-wechat project add <name> --cwd <absolute-project-path> --mode read`
-3. `codex-wechat setup`
-4. `codex-wechat doctor`
-5. `codex-wechat daemon install`
-6. `codex-wechat carry-current --project current --to last` only from an active Codex thread
-7. Ask the user to send `/projects`, `/project <name>`, and `/status` in WeChat
+For a fresh install, prefer the one-line onboarding flow:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/FUY25/codex-wechat-handoff/main/install.sh | bash -s -- --onboard
+```
+
+That installs the CLI and skill, then runs `codex-wechat init`, `codex-wechat setup`, `codex-wechat doctor`, `codex-wechat daemon install`, and `codex-wechat daemon status`.
+
+After the one-liner, optionally add allowed real code projects with:
+
+```bash
+codex-wechat project add <name> --cwd <absolute-project-path> --mode read
+```
+
+Then ask the user to send `/onboarding`, `/projects`, `/project <name>`, and `/status` in WeChat. Run `codex-wechat carry-current --project current --to last` only from an active Codex thread.
 
 First WeChat onboarding message should start with carry-over:
 

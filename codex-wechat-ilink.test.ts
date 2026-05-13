@@ -818,6 +818,19 @@ describe("cli and skill packaging", () => {
     expect(skill).toContain("codex-wechat project add");
   });
 
+  test("install script exposes a one-line onboarding flow", () => {
+    const install = readFileSync(path.join(import.meta.dir, "install.sh"), "utf-8");
+    const readme = readFileSync(path.join(import.meta.dir, "README.md"), "utf-8");
+
+    expect(install).toContain("--onboard");
+    expect(install).toContain("codex-wechat init");
+    expect(install).toContain("codex-wechat setup");
+    expect(install).toContain("codex-wechat doctor");
+    expect(install).toContain("codex-wechat daemon install");
+    expect(install).toContain("codex-wechat daemon status");
+    expect(readme).toContain("bash -s -- --onboard");
+  });
+
   test("send-file CLI supports dry-run without account credentials", () => {
     withTempDir((dir) => {
       const filePath = path.join(dir, "report.pdf");

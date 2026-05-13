@@ -6,6 +6,16 @@ Codex WeChat Handoff connects personal WeChat iLink to Codex app-server. It is b
 
 ## Quick Start
 
+Full onboarding one-liner:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/FUY25/codex-wechat-handoff/main/install.sh | bash -s -- --onboard
+```
+
+This installs the CLI and skill, creates the default `inbox`, starts QR setup, runs `doctor`, installs the background daemon, and prints daemon status.
+
+Manual flow:
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/FUY25/codex-wechat-handoff/main/install.sh | bash
 codex-wechat init

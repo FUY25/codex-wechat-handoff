@@ -1,6 +1,41 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ONBOARD="${CODEX_WECHAT_HANDOFF_ONBOARD:-0}"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  install.sh [--onboard]
+
+Options:
+  --onboard   Install, then run codex-wechat init/setup/doctor/daemon install/status.
+  --help      Show this help.
+
+Environment:
+  CODEX_WECHAT_HANDOFF_REPO       Git repo URL to install from.
+  CODEX_WECHAT_HANDOFF_DIR        Install directory. Default: ~/.codex-wechat-handoff/app
+  CODEX_WECHAT_HANDOFF_ONBOARD=1  Same as --onboard.
+USAGE
+}
+
+for arg in "$@"; do
+  case "$arg" in
+    --onboard)
+      ONBOARD=1
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $arg"
+      usage
+      exit 1
+      ;;
+  esac
+done
+
 if ! command -v git >/dev/null 2>&1; then
   echo "git is required. Install git and re-run."
   exit 1
@@ -35,6 +70,26 @@ ln -sfn "$REPO_DIR/skills/codex-wechat" "$HOME/.codex/skills/codex-wechat"
 
 echo "Installed codex-wechat."
 echo "CLI: $HOME/.local/bin/codex-wechat"
-echo "Next: codex-wechat init"
-echo "Then: codex-wechat setup"
-echo "Then: codex-wechat doctor"
+
+if [ "$ONBOARD" = "1" ]; then
+  export PATH="$HOME/.local/bin:$PATH"
+  echo
+  echo "Starting Codex WeChat Handoff onboarding."
+  echo "+ codex-wechat init"
+  codex-wechat init
+  echo "+ codex-wechat setup"
+  codex-wechat setup
+  echo "+ codex-wechat doctor"
+  codex-wechat doctor
+  echo "+ codex-wechat daemon install"
+  codex-wechat daemon install
+  echo "+ codex-wechat daemon status"
+  codex-wechat daemon status
+  echo
+  echo "Onboarding complete. In WeChat, send /onboarding or /intro."
+else
+  echo "Next: codex-wechat init"
+  echo "Then: codex-wechat setup"
+  echo "Then: codex-wechat doctor"
+  echo "One-line onboarding: curl -fsSL https://raw.githubusercontent.com/FUY25/codex-wechat-handoff/main/install.sh | bash -s -- --onboard"
+fi
