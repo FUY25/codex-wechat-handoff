@@ -780,8 +780,8 @@ describe("stage 1-6 carry-over plan", () => {
       now: "2026-05-12T12:00:00.000Z",
     });
     const events = [
-      { type: "wechat_message_received", at: "2026-05-12T12:01:00.000Z", data: { senderId: "sender-a", textPreview: "检查 release" } },
-      { type: "reply_sent", at: "2026-05-12T12:02:00.000Z", data: { senderId: "sender-a", context: "final_reply" } },
+      { type: "wechat_message_received", at: "2026-05-12T12:01:00.000Z", data: { senderId: "sender-a", projectName: "vibelight", threadId: "desktop-thread", textPreview: "检查 release" } },
+      { type: "reply_sent", at: "2026-05-12T12:02:00.000Z", data: { senderId: "sender-a", projectName: "vibelight", threadId: "desktop-thread", context: "final_reply" } },
     ];
 
     const result = pullCurrentToDesktop(state, {
@@ -798,6 +798,29 @@ describe("stage 1-6 carry-over plan", () => {
     expect(result.notification).toContain("mode: read");
     expect(result.notification).toContain("model: gpt-5.4-mini");
     expect(state.senders["sender-a"].routes?.vibelight.leaseState).toBe("desktop_active");
+  });
+
+  test("pull-current refuses to pull while a WeChat turn is still active", () => {
+    const state = createBridgeState();
+    carryCurrentToWeChat(state, projects, {
+      senderId: "sender-a",
+      projectName: "vibelight",
+      threadId: "desktop-thread",
+      now: "2026-05-12T12:00:00.000Z",
+    });
+    const route = state.senders["sender-a"].routes!.vibelight;
+    route.activeTurn = { turnId: "active", origin: "wechat", startedAt: "2026-05-12T12:01:00.000Z" };
+
+    expect(() =>
+      pullCurrentToDesktop(state, {
+        threadId: "desktop-thread",
+        projectName: "vibelight",
+        events: [],
+        projects,
+        now: "2026-05-12T12:02:00.000Z",
+      }),
+    ).toThrow("WeChat turn is still running");
+    expect(state.senders["sender-a"].routes?.vibelight.leaseState).toBe("wechat_active");
   });
 
   test("parses carry-over and polish commands", () => {
@@ -890,16 +913,21 @@ describe("stage 1-6 carry-over plan", () => {
   test("builds a carry-back delta from event logs", () => {
     const delta = buildCarryBackDelta(
       [
-        { type: "wechat_message_received", at: "2026-05-12T12:01:00.000Z", data: { senderId: "sender-a", textPreview: "先查 release" } },
-        { type: "turn_completed", at: "2026-05-12T12:02:00.000Z", data: { senderId: "sender-a", threadId: "desktop-thread" } },
-        { type: "reply_sent", at: "2026-05-12T12:03:00.000Z", data: { senderId: "sender-a", context: "final_reply" } },
+        { type: "reply_sent", at: "2026-05-12T12:00:30.000Z", data: { senderId: "sender-a", projectName: "vibelight", threadId: "desktop-thread", context: "carry_notice" } },
+        { type: "wechat_message_received", at: "2026-05-12T12:01:00.000Z", data: { senderId: "sender-a", projectName: "vibelight", threadId: "desktop-thread", textPreview: "先查 release" } },
+        { type: "turn_completed", at: "2026-05-12T12:02:00.000Z", data: { senderId: "sender-a", projectName: "vibelight", threadId: "desktop-thread" } },
+        { type: "reply_sent", at: "2026-05-12T12:03:00.000Z", data: { senderId: "sender-a", projectName: "vibelight", threadId: "desktop-thread", context: "final_reply" } },
+        { type: "wechat_message_received", at: "2026-05-12T12:04:00.000Z", data: { senderId: "sender-a", projectName: "inbox", threadId: "other-thread", textPreview: "不该混进来" } },
       ],
-      { senderId: "sender-a", since: "2026-05-12T12:00:00.000Z" },
+      { senderId: "sender-a", projectName: "vibelight", threadId: "desktop-thread", since: "2026-05-12T12:00:00.000Z" },
     );
 
     expect(delta).toContain("Mobile continuation");
     expect(delta).toContain("先查 release");
-    expect(delta).toContain("turn_completed");
+    expect(delta).toContain("Reply sent (final_reply)");
+    expect(delta).not.toContain("carry_notice");
+    expect(delta).not.toContain("不该混进来");
+    expect(delta).not.toContain("turn_completed");
   });
 });
 

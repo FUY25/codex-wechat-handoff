@@ -1411,16 +1411,20 @@ export function pauseWechatRoutesForDesktopActivity(
 
 export function buildCarryBackDelta(
   events: BridgeEvent[],
-  params: { senderId: string; since?: string | null },
+  params: { senderId: string; projectName?: string; threadId?: string; since?: string | null },
 ): string {
   const sinceMs = params.since ? Date.parse(params.since) : 0;
-  const deltaEventTypes = new Set(["wechat_message_received", "turn_completed", "reply_sent"]);
+  const deltaEventTypes = new Set(["wechat_message_received", "reply_sent"]);
+  const replyContexts = new Set(["final_reply", "error_reply"]);
   const lines = events
     .filter((event) => {
       if (!deltaEventTypes.has(event.type)) return false;
       const atMs = Date.parse(event.at);
       if (Number.isFinite(sinceMs) && Number.isFinite(atMs) && atMs < sinceMs) return false;
       if (event.data?.senderId && event.data.senderId !== params.senderId) return false;
+      if (params.projectName && event.data?.projectName !== params.projectName) return false;
+      if (params.threadId && event.data?.threadId !== params.threadId) return false;
+      if (event.type === "reply_sent" && !replyContexts.has(String(event.data?.context ?? ""))) return false;
       return true;
     })
     .map((event) => {
@@ -1438,11 +1442,16 @@ export function pullCurrentToDesktop(
 ): { senderId: string; projectName: string; delta: string; notification: string } {
   const found = findRouteByThread(state, params.threadId, params.projectName);
   if (!found) throw new Error(`No WeChat route is attached to thread ${params.threadId}`);
+  if (found.route.activeTurn) {
+    throw new Error(`WeChat turn is still running for thread ${params.threadId}. Wait for the WeChat reply to finish, then pull again.`);
+  }
   found.route.leaseState = "desktop_active";
   found.route.activeSurface = "desktop";
   found.route.lastDesktopPullAt = params.now ?? new Date().toISOString();
   const delta = buildCarryBackDelta(found.route ? params.events : [], {
     senderId: found.senderId,
+    projectName: found.projectName,
+    threadId: params.threadId,
     since: found.route.attachedAt ?? null,
   });
   const projectsForRoute = state.senders[found.senderId];
@@ -4038,7 +4047,14 @@ async function commandStart(options: RuntimeOptions): Promise<void> {
 
         console.log(`收到消息: sender=${senderId} text=${text.slice(0, 120)}`);
         lastMessageAt = new Date().toISOString();
-        appendBridgeEvent(options.stateDir, { type: "wechat_message_received", data: { senderId, hasMedia, textPreview: text.slice(0, 120) } });
+        const eventProjectName = activeProjectName(bridgeState, projects, senderId);
+        const eventRoute = routeForProject(bridgeState, senderId, eventProjectName);
+        const eventSession = senderState(bridgeState, senderId).sessions[eventProjectName];
+        const eventThreadId = eventRoute?.attachedThreadId ?? eventSession?.threadId ?? null;
+        appendBridgeEvent(options.stateDir, {
+          type: "wechat_message_received",
+          data: { senderId, projectName: eventProjectName, threadId: eventThreadId ?? undefined, hasMedia, textPreview: text.slice(0, 120) },
+        });
         try {
           const mediaFiles = hasMedia
             ? await downloadInboundMediaFiles({
@@ -4051,6 +4067,8 @@ async function commandStart(options: RuntimeOptions): Promise<void> {
           const parsed = mediaFiles.length ? ({ type: "message", text } as const) : parseBridgeCommand(text);
           let reply: string;
           let replyContext = "final_reply";
+          let replyProjectName = eventProjectName;
+          let replyThreadId: string | null = eventThreadId;
 
           if (parsed.type !== "message") {
             appendBridgeEvent(options.stateDir, { type: "command_received", data: { senderId, command: parsed.type } });
@@ -4086,6 +4104,7 @@ async function commandStart(options: RuntimeOptions): Promise<void> {
             const mode = activeMode(bridgeState, projects, senderId);
             const model = activeModel(bridgeState, projects, senderId, projectName) ?? options.codexModel;
             const route = routeForProject(bridgeState, senderId, projectName);
+            replyProjectName = projectName;
             const disposition = getOrdinaryWechatMessageDisposition(route ?? { leaseState: "wechat_active" });
             if (disposition.action === "block") {
               reply =
@@ -4115,6 +4134,7 @@ async function commandStart(options: RuntimeOptions): Promise<void> {
             if (appServer) {
               const existingSession = sender.sessions[projectName];
               const activeThreadId = route?.attachedThreadId ?? existingSession?.threadId;
+              replyThreadId = activeThreadId ?? null;
               activeTurn = true;
               activeThread = activeThreadId ?? null;
               if (route) {
@@ -4143,6 +4163,7 @@ async function commandStart(options: RuntimeOptions): Promise<void> {
                   };
                 }
                 activeThread = run.threadId;
+                replyThreadId = run.threadId;
                 saveBridgeState(options.stateDir, bridgeState);
                 appendBridgeEvent(options.stateDir, { type: "turn_completed", data: { senderId, projectName, threadId: run.threadId, backend: "app-server" } });
                 reply = run.reply;
@@ -4189,7 +4210,10 @@ async function commandStart(options: RuntimeOptions): Promise<void> {
 
           if (!options.dryRun) {
             const clientIds = await sendReplyMessage({ account, options, toUserId: senderId, reply, contextToken });
-            appendBridgeEvent(options.stateDir, { type: "reply_sent", data: { senderId, clientIds, context: replyContext } });
+            appendBridgeEvent(options.stateDir, {
+              type: "reply_sent",
+              data: { senderId, projectName: replyProjectName, threadId: replyThreadId ?? undefined, clientIds, context: replyContext },
+            });
             console.log(`已发送: client_id=${clientIds.join(",")}`);
           }
         } catch (error) {
@@ -4199,7 +4223,10 @@ async function commandStart(options: RuntimeOptions): Promise<void> {
           if (!options.dryRun) {
             try {
               const clientId = await sendTextMessage(account, senderId, reply, contextToken);
-              appendBridgeEvent(options.stateDir, { type: "reply_sent", data: { senderId, clientIds: [clientId], context: "error_reply" } });
+              appendBridgeEvent(options.stateDir, {
+                type: "reply_sent",
+                data: { senderId, projectName: eventProjectName, threadId: eventThreadId ?? undefined, clientIds: [clientId], context: "error_reply" },
+              });
               console.log(`已发送错误提示: client_id=${clientId}`);
             } catch (sendError) {
               appendBridgeEvent(options.stateDir, {
