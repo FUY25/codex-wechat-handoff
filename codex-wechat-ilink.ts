@@ -221,6 +221,8 @@ export type FinishRunOffer = {
   mode: BridgeMode;
   model?: string;
   message?: string;
+  summary?: string;
+  nextAction?: string;
   createdAt: string;
   sessionCursor?: CodexSessionCursor;
   needsMobilePull?: boolean;
@@ -236,6 +238,8 @@ export type SenderState = {
   activeMode?: StoredBridgeMode;
   projectModels?: Record<string, string>;
   routes?: Record<string, SenderProjectRoute>;
+  threadFinishNotifications?: Record<string, FinishNotificationState>;
+  lastFinishNotificationThreadId?: string;
   finishNotifications?: FinishNotificationState;
   lastSeenAt?: string;
   sessions: Record<string, SenderProjectSession>;
@@ -1438,19 +1442,52 @@ function findRouteByThread(
   return null;
 }
 
-function finishNotificationsFor(sender: SenderState): FinishNotificationState {
+function finishNotificationsFor(sender: SenderState, threadId?: string): FinishNotificationState {
+  if (threadId?.trim()) {
+    sender.threadFinishNotifications ??= {};
+    sender.threadFinishNotifications[threadId] ??= {};
+    return sender.threadFinishNotifications[threadId];
+  }
   sender.finishNotifications ??= {};
   return sender.finishNotifications;
 }
 
-export function isFinishNotificationEnabled(state: BridgeState, senderId: string): boolean {
-  return Boolean(senderState(state, senderId).finishNotifications?.enabled);
+function finishNotificationsForStatus(sender: SenderState, threadId?: string): FinishNotificationState | undefined {
+  if (threadId?.trim()) return sender.threadFinishNotifications?.[threadId];
+  return sender.finishNotifications;
 }
 
-export function setFinishNotificationEnabled(state: BridgeState, senderId: string, enabled: boolean): FinishNotificationState {
-  const notifications = finishNotificationsFor(senderState(state, senderId));
+function latestPendingFinishOffer(sender: SenderState, requestedThreadId?: string): { threadId?: string; offer: FinishRunOffer } | null {
+  if (requestedThreadId?.trim()) {
+    const offer = sender.threadFinishNotifications?.[requestedThreadId]?.pendingOffer;
+    return offer ? { threadId: requestedThreadId, offer } : null;
+  }
+  const latestThreadId = sender.lastFinishNotificationThreadId;
+  if (latestThreadId) {
+    const latestOffer = sender.threadFinishNotifications?.[latestThreadId]?.pendingOffer;
+    if (latestOffer) return { threadId: latestThreadId, offer: latestOffer };
+  }
+  for (const [threadId, notifications] of Object.entries(sender.threadFinishNotifications ?? {})) {
+    if (notifications.pendingOffer) return { threadId, offer: notifications.pendingOffer };
+  }
+  return sender.finishNotifications?.pendingOffer ? { offer: sender.finishNotifications.pendingOffer } : null;
+}
+
+export function isFinishNotificationEnabled(state: BridgeState, senderId: string, threadId?: string): boolean {
+  const sender = senderState(state, senderId);
+  if (threadId?.trim()) return Boolean(sender.threadFinishNotifications?.[threadId]?.enabled);
+  return Boolean(sender.finishNotifications?.enabled);
+}
+
+export function setFinishNotificationEnabled(state: BridgeState, senderId: string, enabled: boolean, threadId?: string): FinishNotificationState {
+  const notifications = finishNotificationsFor(senderState(state, senderId), threadId);
   notifications.enabled = enabled;
   return notifications;
+}
+
+function findActiveDesktopThreadForSender(state: BridgeState, projects: ProjectRegistry, senderId: string): string | null {
+  const projectName = activeProjectName(state, projects, senderId);
+  return routeForProject(state, senderId, projectName)?.attachedThreadId ?? null;
 }
 
 function transcriptHasRawTurns(transcript: string | null | undefined): boolean {
@@ -1459,6 +1496,13 @@ function transcriptHasRawTurns(transcript: string | null | undefined): boolean {
 
 function hasPendingMobileTranscript(route: SenderProjectRoute | undefined): boolean {
   return transcriptHasRawTurns(route?.pendingMobileTranscript);
+}
+
+function compactNotificationText(text: string | undefined, maxChars = 140): string {
+  const normalized = (text ?? "").replace(/\s+/g, " ").trim();
+  if (!normalized) return "";
+  if (normalized.length <= maxChars) return normalized;
+  return `${normalized.slice(0, maxChars - 1)}…`;
 }
 
 export function refreshPendingMobileTranscriptForRoute(
@@ -1502,9 +1546,12 @@ export function refreshPendingMobileTranscriptForRoute(
 }
 
 export function buildFinishRunNotification(offer: FinishRunOffer): string {
+  const summary = compactNotificationText(offer.summary ?? offer.message);
+  const nextAction = compactNotificationText(offer.nextAction);
   return [
     "Codex run 完成。",
-    ...(offer.message?.trim() ? [offer.message.trim()] : []),
+    ...(summary ? [`完成：${summary}`] : []),
+    ...(nextAction ? [`需要你：${nextAction}`] : []),
     "",
     `project: ${offer.projectName}`,
     `cwd: ${offer.cwd}`,
@@ -1535,6 +1582,8 @@ export function recordFinishRunOffer(
     mode?: BridgeMode;
     model?: string;
     message?: string;
+    summary?: string;
+    nextAction?: string;
     now?: string;
     sessionCursor?: CodexSessionCursor;
   },
@@ -1552,11 +1601,14 @@ export function recordFinishRunOffer(
     mode,
     model,
     message: params.message,
+    summary: params.summary,
+    nextAction: params.nextAction,
     createdAt: params.now ?? new Date().toISOString(),
     sessionCursor: params.sessionCursor,
     needsMobilePull: Boolean(foundRoute?.route.needsReconcile || hasPendingMobileTranscript(foundRoute?.route)),
   };
-  finishNotificationsFor(sender).pendingOffer = offer;
+  finishNotificationsFor(sender, params.threadId).pendingOffer = offer;
+  sender.lastFinishNotificationThreadId = params.threadId;
   return { offer, notification: buildFinishRunNotification(offer) };
 }
 
@@ -1565,6 +1617,7 @@ export function continueFinishRunOfferToWeChat(
   projects: ProjectRegistry,
   senderId: string,
   params: {
+    threadId?: string;
     mobileThreadId?: string;
     mobileStartCursor?: CodexSessionCursor;
     roots?: string[];
@@ -1572,18 +1625,23 @@ export function continueFinishRunOfferToWeChat(
   } = {},
 ): { handled: true; reply: string; projectName?: string; desktopThreadId?: string; mobileThreadId?: string } {
   const sender = senderState(state, senderId);
-  const offer = sender.finishNotifications?.pendingOffer;
+  const pending = latestPendingFinishOffer(sender, params.threadId);
+  const offerThreadId = pending?.threadId;
+  const notifications = finishNotificationsForStatus(sender, offerThreadId);
+  const offer = pending?.offer;
   if (!offer) return { handled: true, reply: "当前没有可继续到手机的 finish notification。" };
   const project = projects.projects[offer.projectName];
   if (!project) {
-    sender.finishNotifications!.pendingOffer = null;
+    if (notifications) notifications.pendingOffer = null;
+    if (sender.finishNotifications?.pendingOffer?.threadId === offer.threadId) sender.finishNotifications.pendingOffer = null;
     return { handled: true, reply: `finish notification 的 project 已不存在: ${offer.projectName}` };
   }
 
   const route = sender.routes?.[offer.projectName];
   if (route?.attachedThreadId === offer.threadId && route.leaseState !== "wechat_active") {
     const resumed = resumeRouteToWeChat(state, projects, senderId, { roots: params.roots, now: params.now });
-    sender.finishNotifications!.pendingOffer = null;
+    if (notifications) notifications.pendingOffer = null;
+    if (sender.finishNotifications?.pendingOffer?.threadId === offer.threadId) sender.finishNotifications.pendingOffer = null;
     return {
       handled: true,
       reply: [
@@ -1598,7 +1656,8 @@ export function continueFinishRunOfferToWeChat(
   }
 
   if (route?.attachedThreadId === offer.threadId && route.leaseState === "wechat_active") {
-    sender.finishNotifications!.pendingOffer = null;
+    if (notifications) notifications.pendingOffer = null;
+    if (sender.finishNotifications?.pendingOffer?.threadId === offer.threadId) sender.finishNotifications.pendingOffer = null;
     return {
       handled: true,
       reply: "这条 thread 已经在手机 remote mode。\n直接发消息就继续。",
@@ -1627,7 +1686,8 @@ export function continueFinishRunOfferToWeChat(
     mobileStartCursor: params.mobileStartCursor,
     now: params.now,
   });
-  sender.finishNotifications!.pendingOffer = null;
+  if (notifications) notifications.pendingOffer = null;
+  if (sender.finishNotifications?.pendingOffer?.threadId === offer.threadId) sender.finishNotifications.pendingOffer = null;
   return {
     handled: true,
     reply: [
@@ -2303,21 +2363,34 @@ export function applyBridgeCommand(
   if (command.type === "error") return { handled: true, reply: command.message };
 
   if (command.type === "notify") {
+    const notifyThreadId = findActiveDesktopThreadForSender(state, projects, senderId);
+    if (!notifyThreadId && command.action !== "status") {
+      return {
+        handled: true,
+        reply: [
+          "当前微信会话没有绑定 Desktop thread，不能在手机侧开启 per-thread finish-run 提醒。",
+          "请回到对应的 Codex Desktop thread 运行：codex-wechat notify-finish on",
+        ].join("\n"),
+      };
+    }
     if (command.action === "on") {
-      setFinishNotificationEnabled(state, senderId, true);
-      return { handled: true, reply: "finish-run 微信提醒：on\n任务结束提醒会发到这里；回复 /continue 才会接管手机。" };
+      setFinishNotificationEnabled(state, senderId, true, notifyThreadId ?? undefined);
+      return { handled: true, reply: `finish-run 微信提醒：on\nthread: ${notifyThreadId}\n任务结束提醒会发到这里；回复 /continue 才会接管手机。` };
     }
     if (command.action === "off") {
-      setFinishNotificationEnabled(state, senderId, false);
-      return { handled: true, reply: "finish-run 微信提醒：off\n之后 hook 不会主动发任务完成提醒。" };
+      setFinishNotificationEnabled(state, senderId, false, notifyThreadId ?? undefined);
+      return { handled: true, reply: `finish-run 微信提醒：off\nthread: ${notifyThreadId}\n之后这个 Desktop thread 的 hook 不会主动发任务完成提醒。` };
     }
-    const notifications = sender.finishNotifications;
+    const notifications = finishNotificationsForStatus(sender, notifyThreadId ?? undefined);
     return {
       handled: true,
       reply: [
         `finish-run 微信提醒：${notifications?.enabled ? "on" : "off"}`,
+        `thread: ${notifyThreadId ?? "none"}`,
         `pending_continue: ${notifications?.pendingOffer ? "yes" : "no"}`,
-        "回复 /continue 只会在有 pending finish notification 时接管手机；不回复则保持当前微信 state。",
+        notifyThreadId
+          ? "回复 /continue 只会在有 pending finish notification 时接管手机；不回复则保持当前微信 state。"
+          : "per-thread toggle 请在对应的 Desktop thread 里运行 codex-wechat notify-finish on。",
       ].join("\n"),
     };
   }
@@ -4325,21 +4398,34 @@ async function commandNotifyFinish(options: RuntimeOptions, args: Args): Promise
   const state = loadBridgeState(options.stateDir);
   const toArg = typeof args.to === "string" ? args.to : "last";
   const senderId = resolveTargetSender(state, options.stateDir, toArg);
+  const resolveThreadId = (required: boolean): string | null => {
+    if (typeof args["thread-id"] === "string" && args["thread-id"].trim()) return args["thread-id"].trim();
+    try {
+      return readCurrentCodexThreadId();
+    } catch (error) {
+      if (required) throw error;
+      return null;
+    }
+  };
 
   if (subcommand === "on" || subcommand === "off") {
+    const threadId = resolveThreadId(true)!;
     const enabled = subcommand === "on";
-    setFinishNotificationEnabled(state, senderId, enabled);
+    setFinishNotificationEnabled(state, senderId, enabled, threadId);
     saveBridgeState(options.stateDir, state);
-    appendBridgeEvent(options.stateDir, { type: "finish_notify_toggled", data: { senderId, enabled } });
+    appendBridgeEvent(options.stateDir, { type: "finish_notify_toggled", data: { senderId, threadId, enabled } });
     console.log(`finish_notify: ${enabled ? "on" : "off"}`);
     console.log(`sender: ${senderId}`);
+    console.log(`thread: ${threadId}`);
     return;
   }
 
   if (subcommand === "status") {
-    const notifications = senderState(state, senderId).finishNotifications;
+    const threadId = resolveThreadId(false);
+    const notifications = finishNotificationsForStatus(senderState(state, senderId), threadId ?? undefined);
     console.log(`finish_notify: ${notifications?.enabled ? "on" : "off"}`);
     console.log(`sender: ${senderId}`);
+    console.log(`thread: ${threadId ?? "none"}`);
     console.log(`pending_continue: ${notifications?.pendingOffer ? "yes" : "no"}`);
     return;
   }
@@ -4348,8 +4434,10 @@ async function commandNotifyFinish(options: RuntimeOptions, args: Args): Promise
     throw new Error("Unknown notify-finish command. Use on, off, status, or send.");
   }
 
-  if (!isFinishNotificationEnabled(state, senderId)) {
+  const threadId = typeof args["thread-id"] === "string" ? args["thread-id"] : readCurrentCodexThreadId();
+  if (!isFinishNotificationEnabled(state, senderId, threadId)) {
     console.log("finish_notify: off");
+    console.log(`thread: ${threadId}`);
     console.log("not sent");
     return;
   }
@@ -4361,8 +4449,9 @@ async function commandNotifyFinish(options: RuntimeOptions, args: Args): Promise
   const project = projects.projects[projectName];
   const mode = normalizeMode(typeof args.mode === "string" ? args.mode : "") ?? activeMode(state, projects, senderId);
   const model = typeof args.model === "string" ? args.model : activeModel(state, projects, senderId, projectName) ?? options.codexModel;
-  const threadId = typeof args["thread-id"] === "string" ? args["thread-id"] : readCurrentCodexThreadId();
   const message = typeof args.message === "string" ? args.message : "";
+  const summary = optionString(args, "summary", message);
+  const nextAction = optionString(args, "next-action", optionString(args, "next", optionString(args, "decision", "")));
   const workingState: BridgeState = options.dryRun ? JSON.parse(JSON.stringify(state)) : state;
   const result = recordFinishRunOffer(workingState, projects, {
     senderId,
@@ -4371,6 +4460,8 @@ async function commandNotifyFinish(options: RuntimeOptions, args: Args): Promise
     mode,
     model,
     message,
+    summary,
+    nextAction,
     sessionCursor: options.dryRun ? undefined : findCodexSessionCursorByThread(threadId) ?? undefined,
   });
 
@@ -4384,7 +4475,7 @@ async function commandNotifyFinish(options: RuntimeOptions, args: Args): Promise
   saveBridgeState(options.stateDir, state);
   appendBridgeEvent(options.stateDir, {
     type: "finish_notification_offered",
-    data: { senderId, projectName, threadId, needsMobilePull: result.offer.needsMobilePull ?? false },
+    data: { senderId, projectName, threadId, summary: result.offer.summary, nextAction: result.offer.nextAction, needsMobilePull: result.offer.needsMobilePull ?? false },
   });
   const account = loadAccount(options.stateDir);
   const sendResult = await sendProactiveText({
@@ -4775,7 +4866,7 @@ async function commandStart(options: RuntimeOptions): Promise<void> {
                 lastError,
               });
             } else if (parsed.type === "continue") {
-              const pendingOffer = senderState(bridgeState, senderId).finishNotifications?.pendingOffer;
+              const pendingOffer = latestPendingFinishOffer(senderState(bridgeState, senderId))?.offer;
               let fork: AppServerForkResult | null = null;
               if (pendingOffer) {
                 const pendingRoute = senderState(bridgeState, senderId).routes?.[pendingOffer.projectName];
@@ -4791,6 +4882,7 @@ async function commandStart(options: RuntimeOptions): Promise<void> {
                 }
               }
               const commandResult = continueFinishRunOfferToWeChat(bridgeState, projects, senderId, {
+                threadId: pendingOffer?.threadId,
                 mobileThreadId: fork?.threadId,
                 mobileStartCursor: fork?.cursor,
               });
@@ -4992,7 +5084,7 @@ Usage:
   codex-wechat carry-current [--project current|NAME] [--to last|SENDER] [--thread-id ID]
   codex-wechat pull-current [--project current|NAME] [--thread-id ID]
   codex-wechat carry-status [--project current|NAME]
-  codex-wechat notify-finish on|off|status|send [--project current|NAME] [--to last|SENDER]
+  codex-wechat notify-finish on|off|status|send [--project current|NAME] [--to last|SENDER] [--summary "..."] [--next-action "..."]
   codex-wechat render-html --html PATH [--pdf PATH] [--png PATH] [--renderer auto|chrome|quicklook]
   codex-wechat send-text --message "..." [--to last|SENDER]
   codex-wechat send-file --file PATH [--to last|SENDER] [--message "..."]

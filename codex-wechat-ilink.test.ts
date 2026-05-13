@@ -31,6 +31,7 @@ import {
   extractAgentMessageTextFromAppServerItem,
   formatBridgeError,
   getOrdinaryWechatMessageDisposition,
+  isFinishNotificationEnabled,
   isIlinkSessionTimeout,
   findCodexSessionCursorByThread,
   loadProjectRegistry,
@@ -199,18 +200,37 @@ describe("bridge state commands", () => {
 
   test("toggles finish-run notifications per sender", () => {
     const state = createBridgeState();
+    carryCurrentToWeChat(state, projects, {
+      senderId: "sender-a",
+      projectName: "vibelight",
+      threadId: "desktop-thread",
+      mobileThreadId: "mobile-thread",
+    });
 
     const on = applyBridgeCommand(state, projects, "sender-a", { type: "notify", action: "on" });
     expect(on.reply).toContain("finish-run 微信提醒：on");
-    expect(state.senders["sender-a"].finishNotifications?.enabled).toBe(true);
+    expect(on.reply).toContain("thread: desktop-thread");
+    expect(state.senders["sender-a"].threadFinishNotifications?.["desktop-thread"]?.enabled).toBe(true);
 
     const status = applyBridgeCommand(state, projects, "sender-a", { type: "notify", action: "status" });
     expect(status.reply).toContain("finish-run 微信提醒：on");
+    expect(status.reply).toContain("thread: desktop-thread");
     expect(status.reply).toContain("pending_continue: no");
 
     const off = applyBridgeCommand(state, projects, "sender-a", { type: "notify", action: "off" });
     expect(off.reply).toContain("finish-run 微信提醒：off");
-    expect(state.senders["sender-a"].finishNotifications?.enabled).toBe(false);
+    expect(state.senders["sender-a"].threadFinishNotifications?.["desktop-thread"]?.enabled).toBe(false);
+  });
+
+  test("finish-run notification toggles are scoped per Desktop thread", () => {
+    const state = createBridgeState();
+
+    setFinishNotificationEnabled(state, "sender-a", true, "thread-a");
+    setFinishNotificationEnabled(state, "sender-a", false, "thread-b");
+
+    expect(isFinishNotificationEnabled(state, "sender-a", "thread-a")).toBe(true);
+    expect(isFinishNotificationEnabled(state, "sender-a", "thread-b")).toBe(false);
+    expect(isFinishNotificationEnabled(state, "sender-a", "thread-c")).toBe(false);
   });
 
   test("status uses default project before sender has chosen one", () => {
@@ -1249,7 +1269,7 @@ describe("stage 1-6 carry-over plan", () => {
 
   test("finish-run offer warns when mobile transcript is pending", () => {
     const state = createBridgeState();
-    setFinishNotificationEnabled(state, "sender-a", true);
+    setFinishNotificationEnabled(state, "sender-a", true, "desktop-thread");
     carryCurrentToWeChat(state, projects, {
       senderId: "sender-a",
       projectName: "vibelight",
@@ -1265,23 +1285,25 @@ describe("stage 1-6 carry-over plan", () => {
       threadId: "desktop-thread",
       mode: "write",
       model: "gpt-5.4",
-      message: "测试完成",
+      summary: "测试完成 release 检查",
+      nextAction: "决定是否发版",
       now: "2026-05-12T12:10:00.000Z",
     });
 
     expect(result.offer.needsMobilePull).toBe(true);
     expect(result.notification).toContain("Codex run 完成");
-    expect(result.notification).toContain("测试完成");
+    expect(result.notification).toContain("完成：测试完成 release 检查");
+    expect(result.notification).toContain("需要你：决定是否发版");
     expect(result.notification).toContain("/continue");
     expect(result.notification).toContain("不回复就不会接管手机");
     expect(result.notification).toContain("先在电脑运行 pull WeChat back");
-    expect(state.senders["sender-a"].finishNotifications?.pendingOffer?.threadId).toBe("desktop-thread");
+    expect(state.senders["sender-a"].threadFinishNotifications?.["desktop-thread"]?.pendingOffer?.threadId).toBe("desktop-thread");
     expect(buildFinishRunNotification(result.offer)).toContain("Desktop context 不含手机期间内容");
   });
 
   test("continue from finish notification forks into a mobile route and clears the offer", () => {
     const state = createBridgeState();
-    setFinishNotificationEnabled(state, "sender-a", true);
+    setFinishNotificationEnabled(state, "sender-a", true, "desktop-thread");
     recordFinishRunOffer(state, projects, {
       senderId: "sender-a",
       projectName: "vibelight",
@@ -1314,7 +1336,7 @@ describe("stage 1-6 carry-over plan", () => {
       mobileThreadId: "mobile-thread",
       leaseState: "wechat_active",
     });
-    expect(state.senders["sender-a"].finishNotifications?.pendingOffer).toBeNull();
+    expect(state.senders["sender-a"].threadFinishNotifications?.["desktop-thread"]?.pendingOffer).toBeNull();
   });
 
   test("new is blocked while a Desktop carry-over route is active", () => {
@@ -1509,7 +1531,9 @@ describe("cli and skill packaging", () => {
             "sender-a": {
               lastSeenAt: "2026-05-12T12:00:00.000Z",
               sessions: {},
-              finishNotifications: { enabled: true },
+              threadFinishNotifications: {
+                "desktop-thread": { enabled: true },
+              },
             },
           },
         }),
@@ -1526,8 +1550,10 @@ describe("cli and skill packaging", () => {
           dir,
           "--thread-id",
           "desktop-thread",
-          "--message",
+          "--summary",
           "smoke done",
+          "--next-action",
+          "decide next step",
           "--dry-run",
         ],
         cwd: import.meta.dir,
@@ -1537,7 +1563,8 @@ describe("cli and skill packaging", () => {
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout.toString()).toContain("dry-run: would send finish notification");
-      expect(result.stdout.toString()).toContain("smoke done");
+      expect(result.stdout.toString()).toContain("完成：smoke done");
+      expect(result.stdout.toString()).toContain("需要你：decide next step");
       expect(result.stdout.toString()).toContain("/continue");
     });
   });
