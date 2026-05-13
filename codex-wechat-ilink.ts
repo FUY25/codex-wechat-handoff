@@ -1473,16 +1473,38 @@ function latestPendingFinishOffer(sender: SenderState, requestedThreadId?: strin
   return sender.finishNotifications?.pendingOffer ? { offer: sender.finishNotifications.pendingOffer } : null;
 }
 
-export function isFinishNotificationEnabled(state: BridgeState, senderId: string, threadId?: string): boolean {
+export function resolveFinishNotificationStatus(
+  state: BridgeState,
+  senderId: string,
+  threadId?: string,
+): { enabled: boolean; source: "thread" | "default"; globalDefault: boolean; threadOverride?: boolean } {
   const sender = senderState(state, senderId);
-  if (threadId?.trim()) return Boolean(sender.threadFinishNotifications?.[threadId]?.enabled);
-  return Boolean(sender.finishNotifications?.enabled);
+  const globalDefault = Boolean(sender.finishNotifications?.enabled);
+  const threadOverride = threadId?.trim() ? sender.threadFinishNotifications?.[threadId]?.enabled : undefined;
+  return {
+    enabled: typeof threadOverride === "boolean" ? threadOverride : globalDefault,
+    source: typeof threadOverride === "boolean" ? "thread" : "default",
+    globalDefault,
+    threadOverride,
+  };
 }
 
-export function setFinishNotificationEnabled(state: BridgeState, senderId: string, enabled: boolean, threadId?: string): FinishNotificationState {
+export function isFinishNotificationEnabled(state: BridgeState, senderId: string, threadId?: string): boolean {
+  return resolveFinishNotificationStatus(state, senderId, threadId).enabled;
+}
+
+export function setFinishNotificationEnabled(state: BridgeState, senderId: string, enabled: boolean | null, threadId?: string): FinishNotificationState {
   const notifications = finishNotificationsFor(senderState(state, senderId), threadId);
-  notifications.enabled = enabled;
+  if (enabled === null) {
+    delete notifications.enabled;
+  } else {
+    notifications.enabled = enabled;
+  }
   return notifications;
+}
+
+export function setFinishNotificationDefault(state: BridgeState, senderId: string, enabled: boolean): FinishNotificationState {
+  return setFinishNotificationEnabled(state, senderId, enabled);
 }
 
 function findActiveDesktopThreadForSender(state: BridgeState, projects: ProjectRegistry, senderId: string): string | null {
@@ -2073,7 +2095,7 @@ export function buildOnboardingMessage(): string {
     "/status 查看当前 thread",
     "/new 开一个新的手机侧 project session；Desktop carry-over 中会被拦截。",
     "/stop 查看当前停止能力；安全 interrupt 还在开发中。",
-    "/notify on|off|status 开关 finish-run 微信提醒。",
+  "/notify status 查看 finish-run 微信提醒；开关只能在 Desktop/CLI 控制。",
     "/continue 从 finish-run 提醒接管到手机；忽略提醒不会改变当前微信 state。",
     "/help 查看全部命令",
     "",
@@ -2364,33 +2386,32 @@ export function applyBridgeCommand(
 
   if (command.type === "notify") {
     const notifyThreadId = findActiveDesktopThreadForSender(state, projects, senderId);
-    if (!notifyThreadId && command.action !== "status") {
+    const status = resolveFinishNotificationStatus(state, senderId, notifyThreadId ?? undefined);
+    if (command.action !== "status") {
       return {
         handled: true,
         reply: [
-          "当前微信会话没有绑定 Desktop thread，不能在手机侧开启 per-thread finish-run 提醒。",
-          "请回到对应的 Codex Desktop thread 运行：codex-wechat notify-finish on",
+          "finish-run 微信提醒只能在 Desktop thread 里开关，微信不控制这个状态。",
+          `当前状态：${status.enabled ? "on" : "off"} (${status.source})`,
+          `thread: ${notifyThreadId ?? "none"}`,
+          "请回到对应的 Codex Desktop thread 运行：codex-wechat notify-finish on|off|inherit",
+          "全局默认值只能在 Desktop/CLI 里运行：codex-wechat notify-finish default on|off",
         ].join("\n"),
       };
-    }
-    if (command.action === "on") {
-      setFinishNotificationEnabled(state, senderId, true, notifyThreadId ?? undefined);
-      return { handled: true, reply: `finish-run 微信提醒：on\nthread: ${notifyThreadId}\n任务结束提醒会发到这里；回复 /continue 才会接管手机。` };
-    }
-    if (command.action === "off") {
-      setFinishNotificationEnabled(state, senderId, false, notifyThreadId ?? undefined);
-      return { handled: true, reply: `finish-run 微信提醒：off\nthread: ${notifyThreadId}\n之后这个 Desktop thread 的 hook 不会主动发任务完成提醒。` };
     }
     const notifications = finishNotificationsForStatus(sender, notifyThreadId ?? undefined);
     return {
       handled: true,
       reply: [
-        `finish-run 微信提醒：${notifications?.enabled ? "on" : "off"}`,
+        `finish-run 微信提醒：${status.enabled ? "on" : "off"}`,
+        `source: ${status.source}`,
+        `global_default: ${status.globalDefault ? "on" : "off"}`,
+        `thread_override: ${typeof status.threadOverride === "boolean" ? (status.threadOverride ? "on" : "off") : "inherit"}`,
         `thread: ${notifyThreadId ?? "none"}`,
         `pending_continue: ${notifications?.pendingOffer ? "yes" : "no"}`,
         notifyThreadId
-          ? "回复 /continue 只会在有 pending finish notification 时接管手机；不回复则保持当前微信 state。"
-          : "per-thread toggle 请在对应的 Desktop thread 里运行 codex-wechat notify-finish on。",
+          ? "微信这里只能查看；开关请在对应 Desktop thread 运行 codex-wechat notify-finish on|off|inherit。"
+          : "微信这里只能查看；全局默认值请在 Desktop/CLI 运行 codex-wechat notify-finish default on|off。",
       ].join("\n"),
     };
   }
@@ -2563,7 +2584,7 @@ export function applyBridgeCommand(
         "/intro /onboarding",
         "/current /sessions /attach latest|<id>",
         "/back /resume /detach",
-        "/notify on|off|status /continue",
+        "/notify status /continue",
         "/projects /project <name>",
         "/mode read|write|fullaccess",
         "/model <name|default>",
@@ -4408,13 +4429,37 @@ async function commandNotifyFinish(options: RuntimeOptions, args: Args): Promise
     }
   };
 
-  if (subcommand === "on" || subcommand === "off") {
+  if (subcommand === "default") {
+    const action = String(args._[2] ?? "status").toLowerCase();
+    if (action === "status") {
+      const status = resolveFinishNotificationStatus(state, senderId);
+      console.log(`finish_notify_default: ${status.globalDefault ? "on" : "off"}`);
+      console.log(`sender: ${senderId}`);
+      return;
+    }
+    if (action !== "on" && action !== "off") {
+      throw new Error("Unknown notify-finish default command. Use default on, default off, or default status.");
+    }
+    const enabled = action === "on";
+    setFinishNotificationDefault(state, senderId, enabled);
+    saveBridgeState(options.stateDir, state);
+    appendBridgeEvent(options.stateDir, { type: "finish_notify_default_changed", data: { senderId, enabled } });
+    console.log(`finish_notify_default: ${enabled ? "on" : "off"}`);
+    console.log(`sender: ${senderId}`);
+    return;
+  }
+
+  if (subcommand === "on" || subcommand === "off" || subcommand === "inherit") {
     const threadId = resolveThreadId(true)!;
-    const enabled = subcommand === "on";
+    const enabled = subcommand === "inherit" ? null : subcommand === "on";
     setFinishNotificationEnabled(state, senderId, enabled, threadId);
     saveBridgeState(options.stateDir, state);
     appendBridgeEvent(options.stateDir, { type: "finish_notify_toggled", data: { senderId, threadId, enabled } });
-    console.log(`finish_notify: ${enabled ? "on" : "off"}`);
+    const status = resolveFinishNotificationStatus(state, senderId, threadId);
+    console.log(`finish_notify: ${status.enabled ? "on" : "off"}`);
+    console.log(`source: ${status.source}`);
+    console.log(`thread_override: ${typeof status.threadOverride === "boolean" ? (status.threadOverride ? "on" : "off") : "inherit"}`);
+    console.log(`global_default: ${status.globalDefault ? "on" : "off"}`);
     console.log(`sender: ${senderId}`);
     console.log(`thread: ${threadId}`);
     return;
@@ -4423,7 +4468,11 @@ async function commandNotifyFinish(options: RuntimeOptions, args: Args): Promise
   if (subcommand === "status") {
     const threadId = resolveThreadId(false);
     const notifications = finishNotificationsForStatus(senderState(state, senderId), threadId ?? undefined);
-    console.log(`finish_notify: ${notifications?.enabled ? "on" : "off"}`);
+    const status = resolveFinishNotificationStatus(state, senderId, threadId ?? undefined);
+    console.log(`finish_notify: ${status.enabled ? "on" : "off"}`);
+    console.log(`source: ${status.source}`);
+    console.log(`thread_override: ${typeof status.threadOverride === "boolean" ? (status.threadOverride ? "on" : "off") : "inherit"}`);
+    console.log(`global_default: ${status.globalDefault ? "on" : "off"}`);
     console.log(`sender: ${senderId}`);
     console.log(`thread: ${threadId ?? "none"}`);
     console.log(`pending_continue: ${notifications?.pendingOffer ? "yes" : "no"}`);
@@ -4431,7 +4480,7 @@ async function commandNotifyFinish(options: RuntimeOptions, args: Args): Promise
   }
 
   if (subcommand !== "send") {
-    throw new Error("Unknown notify-finish command. Use on, off, status, or send.");
+    throw new Error("Unknown notify-finish command. Use on, off, inherit, default, status, or send.");
   }
 
   const threadId = typeof args["thread-id"] === "string" ? args["thread-id"] : readCurrentCodexThreadId();
@@ -4443,7 +4492,7 @@ async function commandNotifyFinish(options: RuntimeOptions, args: Args): Promise
   }
 
   const projectName = resolveProjectName(projects, {
-    requested: typeof args.project === "string" ? args.project : "current",
+    requestedProject: typeof args.project === "string" ? args.project : "current",
     cwd: options.workspace,
   });
   const project = projects.projects[projectName];
@@ -5084,7 +5133,7 @@ Usage:
   codex-wechat carry-current [--project current|NAME] [--to last|SENDER] [--thread-id ID]
   codex-wechat pull-current [--project current|NAME] [--thread-id ID]
   codex-wechat carry-status [--project current|NAME]
-  codex-wechat notify-finish on|off|status|send [--project current|NAME] [--to last|SENDER] [--summary "..."] [--next-action "..."]
+  codex-wechat notify-finish on|off|inherit|status|default on|default off|send [--project current|NAME] [--to last|SENDER] [--summary "..."] [--next-action "..."]
   codex-wechat render-html --html PATH [--pdf PATH] [--png PATH] [--renderer auto|chrome|quicklook]
   codex-wechat send-text --message "..." [--to last|SENDER]
   codex-wechat send-file --file PATH [--to last|SENDER] [--message "..."]
@@ -5126,7 +5175,7 @@ WeChat commands:
   /resume
   /continue
   /detach
-  /notify on|off|status
+  /notify status
   /intro
   /onboarding
   /history [n]

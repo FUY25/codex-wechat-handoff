@@ -47,12 +47,14 @@ import {
   recordFinishRunOffer,
   resolveProactiveContextToken,
   resolveCachedContextToken,
+  resolveFinishNotificationStatus,
   resolveProjectName,
   resolveTargetSender,
   resolveWechatTurnThreadId,
   resumeRouteToWeChat,
   refreshPendingMobileTranscriptForRoute,
   sandboxForMode,
+  setFinishNotificationDefault,
   setFinishNotificationEnabled,
   continueFinishRunOfferToWeChat,
   consumePendingDesktopTranscript,
@@ -198,7 +200,7 @@ describe("bridge state commands", () => {
     expect(state.senders["sender-a"].projectModels?.vibelight).toBe("gpt-5.2");
   });
 
-  test("toggles finish-run notifications per sender", () => {
+  test("WeChat notify command is read-only and Desktop controls toggles", () => {
     const state = createBridgeState();
     carryCurrentToWeChat(state, projects, {
       senderId: "sender-a",
@@ -206,31 +208,44 @@ describe("bridge state commands", () => {
       threadId: "desktop-thread",
       mobileThreadId: "mobile-thread",
     });
+    setFinishNotificationEnabled(state, "sender-a", true, "desktop-thread");
 
     const on = applyBridgeCommand(state, projects, "sender-a", { type: "notify", action: "on" });
-    expect(on.reply).toContain("finish-run 微信提醒：on");
-    expect(on.reply).toContain("thread: desktop-thread");
+    expect(on.reply).toContain("只能在 Desktop thread 里开关");
     expect(state.senders["sender-a"].threadFinishNotifications?.["desktop-thread"]?.enabled).toBe(true);
 
     const status = applyBridgeCommand(state, projects, "sender-a", { type: "notify", action: "status" });
     expect(status.reply).toContain("finish-run 微信提醒：on");
     expect(status.reply).toContain("thread: desktop-thread");
+    expect(status.reply).toContain("source: thread");
     expect(status.reply).toContain("pending_continue: no");
 
     const off = applyBridgeCommand(state, projects, "sender-a", { type: "notify", action: "off" });
-    expect(off.reply).toContain("finish-run 微信提醒：off");
-    expect(state.senders["sender-a"].threadFinishNotifications?.["desktop-thread"]?.enabled).toBe(false);
+    expect(off.reply).toContain("只能在 Desktop thread 里开关");
+    expect(state.senders["sender-a"].threadFinishNotifications?.["desktop-thread"]?.enabled).toBe(true);
   });
 
-  test("finish-run notification toggles are scoped per Desktop thread", () => {
+  test("finish-run notification toggles use thread override before global default", () => {
     const state = createBridgeState();
 
+    setFinishNotificationDefault(state, "sender-a", true);
     setFinishNotificationEnabled(state, "sender-a", true, "thread-a");
     setFinishNotificationEnabled(state, "sender-a", false, "thread-b");
 
     expect(isFinishNotificationEnabled(state, "sender-a", "thread-a")).toBe(true);
     expect(isFinishNotificationEnabled(state, "sender-a", "thread-b")).toBe(false);
-    expect(isFinishNotificationEnabled(state, "sender-a", "thread-c")).toBe(false);
+    expect(isFinishNotificationEnabled(state, "sender-a", "thread-c")).toBe(true);
+    expect(resolveFinishNotificationStatus(state, "sender-a", "thread-c")).toMatchObject({
+      enabled: true,
+      source: "default",
+      globalDefault: true,
+    });
+    setFinishNotificationEnabled(state, "sender-a", null, "thread-b");
+    expect(resolveFinishNotificationStatus(state, "sender-a", "thread-b")).toMatchObject({
+      enabled: true,
+      source: "default",
+      threadOverride: undefined,
+    });
   });
 
   test("status uses default project before sender has chosen one", () => {
@@ -1433,6 +1448,8 @@ describe("cli and skill packaging", () => {
     expect(skill).toContain("forked mobile session");
     expect(skill).toContain("raw transcript");
     expect(skill).toContain("notify-finish");
+    expect(skill).toContain("default off");
+    expect(skill).toContain("Desktop/CLI-only");
     expect(skill).toContain("/continue");
     expect(skill).not.toContain("Continue the same thread from the phone");
   });
@@ -1566,6 +1583,73 @@ describe("cli and skill packaging", () => {
       expect(result.stdout.toString()).toContain("完成：smoke done");
       expect(result.stdout.toString()).toContain("需要你：decide next step");
       expect(result.stdout.toString()).toContain("/continue");
+    });
+  });
+
+  test("notify-finish CLI supports default and inherit states", () => {
+    withTempDir((dir) => {
+      const defaultOn = Bun.spawnSync({
+        cmd: [
+          process.execPath,
+          path.join(import.meta.dir, "codex-wechat-ilink.ts"),
+          "notify-finish",
+          "default",
+          "on",
+          "--state-dir",
+          dir,
+          "--to",
+          "sender-a",
+        ],
+        cwd: import.meta.dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(defaultOn.exitCode).toBe(0);
+      expect(defaultOn.stdout.toString()).toContain("finish_notify_default: on");
+
+      const overrideOff = Bun.spawnSync({
+        cmd: [
+          process.execPath,
+          path.join(import.meta.dir, "codex-wechat-ilink.ts"),
+          "notify-finish",
+          "off",
+          "--state-dir",
+          dir,
+          "--to",
+          "sender-a",
+          "--thread-id",
+          "desktop-thread",
+        ],
+        cwd: import.meta.dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(overrideOff.exitCode).toBe(0);
+      expect(overrideOff.stdout.toString()).toContain("source: thread");
+      expect(overrideOff.stdout.toString()).toContain("thread_override: off");
+      expect(overrideOff.stdout.toString()).toContain("global_default: on");
+
+      const inherit = Bun.spawnSync({
+        cmd: [
+          process.execPath,
+          path.join(import.meta.dir, "codex-wechat-ilink.ts"),
+          "notify-finish",
+          "inherit",
+          "--state-dir",
+          dir,
+          "--to",
+          "sender-a",
+          "--thread-id",
+          "desktop-thread",
+        ],
+        cwd: import.meta.dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(inherit.exitCode).toBe(0);
+      expect(inherit.stdout.toString()).toContain("source: default");
+      expect(inherit.stdout.toString()).toContain("thread_override: inherit");
+      expect(inherit.stdout.toString()).toContain("finish_notify: on");
     });
   });
 
