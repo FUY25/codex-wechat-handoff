@@ -625,7 +625,10 @@ describe("stage 1-6 carry-over plan", () => {
     expect(result.notification).toContain("continue from here");
     expect(result.notification).toContain("desktop-thread");
     expect(result.notification).toContain("project: vibelight");
+    expect(result.notification).toContain("cwd: /workspace/vibelight");
     expect(result.notification).toContain("mode: write");
+    expect(result.notification).toContain("permission: write");
+    expect(result.notification).toContain("writes only inside the project cwd");
     expect(result.notification).toContain("model: gpt-5.4-mini");
     expect(state.senders["sender-a"].routes?.vibelight).toMatchObject({
       attachedThreadId: "desktop-thread",

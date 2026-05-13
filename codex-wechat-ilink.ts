@@ -1269,8 +1269,10 @@ export function carryCurrentToWeChat(
     "",
     "已接到电脑上的 Codex 会话。",
     `project: ${params.projectName}`,
+    `cwd: ${project.cwd}`,
     `thread: ${params.threadId}`,
     `mode: ${mode}`,
+    `permission: ${describeModePermission(mode)}`,
     `model: ${model}`,
     "",
     "直接回复就从这里继续。",
@@ -1319,12 +1321,15 @@ export function pullCurrentToDesktop(
   });
   const projectsForRoute = state.senders[found.senderId];
   const projectDefault = params.projects?.projects[found.projectName]?.defaultMode ?? "read";
+  const project = params.projects?.projects[found.projectName];
   const mode = normalizeStoredMode(projectsForRoute?.activeMode ?? projectsForRoute?.sessions?.[found.projectName]?.mode, projectDefault);
   const model = projectsForRoute?.projectModels?.[found.projectName] ?? params.projects?.projects[found.projectName]?.model ?? "default";
   const notification = [
     "已切回电脑继续。",
     `project: ${found.projectName}`,
+    ...(project ? [`cwd: ${project.cwd}`] : []),
     `mode: ${mode}`,
+    `permission: ${describeModePermission(mode)}`,
     `model: ${model}`,
     "手机这边已暂停 remote mode。",
     "",
@@ -1391,6 +1396,12 @@ function normalizeMode(mode: string): BridgeMode | null {
   if (normalized === "read" || normalized === "write" || normalized === "fullaccess") return normalized;
   if (normalized === "bypass") return "fullaccess";
   return null;
+}
+
+function describeModePermission(mode: BridgeMode): string {
+  if (mode === "read") return "read = read/search any readable local files + network; no writes";
+  if (mode === "write") return "write = read/search any readable local files + network; writes only inside the project cwd";
+  return "fullaccess = unrestricted local access";
 }
 
 function normalizeStoredMode(mode: StoredBridgeMode | undefined, fallback: BridgeMode): BridgeMode {
