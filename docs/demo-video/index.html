@@ -16,11 +16,9 @@
         width: 1080px;
         height: 1920px;
         overflow: hidden;
-        background: #07110d;
-        color: #f4fff8;
-        font-family:
-          Inter, "SF Pro Display", "PingFang SC", "Helvetica Neue", Arial,
-          sans-serif;
+        background: #f7faff;
+        color: #122018;
+        font-family: Inter, "Helvetica Neue", Arial, sans-serif;
       }
 
       #root {
@@ -29,9 +27,10 @@
         height: 1920px;
         overflow: hidden;
         background:
-          radial-gradient(circle at 18% 10%, rgba(7, 193, 96, 0.24), transparent 32%),
-          radial-gradient(circle at 88% 78%, rgba(221, 247, 234, 0.13), transparent 34%),
-          #07110d;
+          radial-gradient(circle at 16% 12%, rgba(113, 103, 255, 0.26), transparent 30%),
+          radial-gradient(circle at 88% 18%, rgba(74, 140, 255, 0.16), transparent 28%),
+          radial-gradient(circle at 88% 74%, rgba(7, 193, 96, 0.2), transparent 32%),
+          linear-gradient(180deg, #ffffff 0%, #f7faff 48%, #eef8f2 100%);
       }
 
       .clip {
@@ -47,10 +46,10 @@
       .grain {
         position: absolute;
         inset: 0;
-        opacity: 0.12;
+        opacity: 0.2;
         background-image:
-          linear-gradient(rgba(244, 255, 248, 0.05) 1px, transparent 1px),
-          linear-gradient(90deg, rgba(244, 255, 248, 0.04) 1px, transparent 1px);
+          linear-gradient(rgba(18, 32, 24, 0.035) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(18, 32, 24, 0.028) 1px, transparent 1px);
         background-size: 48px 48px;
         mask-image: radial-gradient(circle at center, black 20%, transparent 82%);
       }
@@ -66,39 +65,34 @@
         width: 360px;
         height: 360px;
         left: -120px;
-        top: 90px;
-        background: rgba(7, 193, 96, 0.18);
+        top: 96px;
+        background: rgba(113, 103, 255, 0.22);
       }
 
       .glow-b {
         width: 460px;
         height: 460px;
-        right: -180px;
+        right: -190px;
         bottom: 180px;
-        background: rgba(221, 247, 234, 0.1);
+        background: rgba(7, 193, 96, 0.16);
       }
 
       .orb {
-        position: absolute;
-        width: 14px;
-        height: 14px;
-        border-radius: 999px;
-        background: #07c160;
-        box-shadow: 0 0 24px rgba(7, 193, 96, 0.64);
+        display: none;
       }
 
       .orb.one {
-        left: 130px;
-        top: 1450px;
+        left: 132px;
+        top: 1468px;
       }
 
       .orb.two {
-        right: 158px;
-        top: 320px;
+        right: 160px;
+        top: 340px;
         width: 10px;
         height: 10px;
-        background: #ddf7ea;
-        box-shadow: 0 0 20px rgba(221, 247, 234, 0.45);
+        background: #07c160;
+        box-shadow: 0 0 20px rgba(7, 193, 96, 0.48);
       }
 
       .scene {
@@ -112,38 +106,61 @@
         gap: 34px;
       }
 
-      .logo-row {
+      .brand-lockup {
         display: flex;
         align-items: center;
         justify-content: center;
-        gap: 24px;
-        color: #f4fff8;
+        gap: 28px;
       }
 
-      .logo-token {
-        min-width: 210px;
-        padding: 24px 30px;
-        border: 1px solid rgba(244, 255, 248, 0.16);
-        border-radius: 34px;
-        background: rgba(23, 35, 30, 0.86);
-        box-shadow: 0 24px 70px rgba(0, 0, 0, 0.32);
-        text-align: center;
-        font-size: 38px;
-        font-weight: 760;
+      .brand-chip {
+        height: 104px;
+        min-width: 0;
+        padding: 0;
+        border-radius: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 18px;
+        border: 0;
+        background: transparent;
+        box-shadow: none;
+      }
+
+      .codex-chip {
+        background: transparent;
+      }
+
+      .wechat-chip {
+        background: transparent;
+        min-width: 0;
+      }
+
+      .codex-mark {
+        width: 70px;
+        height: 70px;
+        object-fit: contain;
+      }
+
+      .wechat-mark {
+        width: 202px;
+        height: 68px;
+        object-fit: contain;
+      }
+
+      .chip-name {
+        color: #122018;
+        font-size: 44px;
+        font-weight: 820;
         letter-spacing: 0;
-      }
-
-      .logo-token.wechat {
-        color: #07110d;
-        background: #07c160;
       }
 
       .separator {
         width: 3px;
         height: 84px;
         border-radius: 999px;
-        background: #4b6257;
-        box-shadow: 0 0 24px rgba(7, 193, 96, 0.32);
+        background: #c9d4ce;
+        box-shadow: none;
       }
 
       .eyebrow {
@@ -151,11 +168,12 @@
         width: fit-content;
         align-items: center;
         gap: 12px;
-        padding: 13px 20px;
-        border-radius: 999px;
-        background: rgba(7, 193, 96, 0.14);
-        color: #9cf1bd;
-        border: 1px solid rgba(7, 193, 96, 0.28);
+        padding: 0 0 0 18px;
+        border-radius: 0;
+        background: transparent;
+        color: #256444;
+        border: 0;
+        border-left: 3px solid #07c160;
         font-size: 28px;
         font-weight: 720;
         letter-spacing: 0;
@@ -170,11 +188,12 @@
       }
 
       .headline {
-        max-width: 920px;
+        max-width: 930px;
         font-size: 82px;
         line-height: 1.08;
-        font-weight: 820;
+        font-weight: 830;
         letter-spacing: 0;
+        color: #122018;
       }
 
       .headline.center {
@@ -187,12 +206,22 @@
         display: block;
       }
 
+      .wechat-highlight {
+        color: #047a3a;
+        font-style: normal;
+        text-decoration: underline;
+        text-decoration-color: rgba(7, 193, 96, 0.32);
+        text-decoration-thickness: 6px;
+        text-underline-offset: 8px;
+        text-shadow: 0 0 22px rgba(7, 193, 96, 0.16);
+      }
+
       .subline {
-        max-width: 860px;
-        color: #a8b8af;
+        max-width: 870px;
+        color: #5c6b63;
         font-size: 34px;
         line-height: 1.38;
-        font-weight: 520;
+        font-weight: 560;
         letter-spacing: 0;
       }
 
@@ -205,28 +234,31 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 34px;
+        gap: 32px;
         width: 100%;
       }
 
-      .desktop {
+      .terminal {
         width: 548px;
-        min-height: 650px;
-        padding: 30px;
-        border-radius: 46px;
-        background: rgba(16, 27, 23, 0.92);
-        border: 1px solid rgba(244, 255, 248, 0.13);
-        box-shadow: 0 34px 90px rgba(0, 0, 0, 0.38);
+        min-height: 662px;
+        padding: 0;
+        border-radius: 34px;
+        background: rgba(8, 14, 12, 0.96);
+        border: 1px solid rgba(18, 32, 24, 0.1);
+        box-shadow:
+          0 34px 90px rgba(53, 72, 61, 0.2),
+          inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+        overflow: hidden;
       }
 
-      .window-bar {
+      .terminal-top {
+        height: 58px;
+        padding: 0 18px;
         display: flex;
         align-items: center;
-        gap: 11px;
-        height: 42px;
-        color: #a8b8af;
-        font-size: 22px;
-        font-weight: 640;
+        gap: 12px;
+        border-bottom: 1px solid rgba(244, 255, 248, 0.1);
+        background: rgba(244, 255, 248, 0.045);
       }
 
       .traffic {
@@ -238,65 +270,84 @@
         width: 13px;
         height: 13px;
         border-radius: 999px;
-        background: rgba(244, 255, 248, 0.28);
       }
 
-      .desktop-title {
-        margin-top: 22px;
-        font-size: 34px;
-        line-height: 1.24;
-        font-weight: 780;
+      .traffic span:nth-child(1) {
+        background: #ff5f57;
       }
 
-      .status-stack {
-        margin-top: 28px;
-        display: flex;
-        flex-direction: column;
-        gap: 15px;
+      .traffic span:nth-child(2) {
+        background: #ffbd2e;
       }
 
-      .status-pill {
+      .traffic span:nth-child(3) {
+        background: #28c840;
+      }
+
+      .terminal-title {
+        margin-left: 8px;
         display: flex;
         align-items: center;
-        gap: 12px;
-        padding: 18px 20px;
-        border-radius: 24px;
-        background: rgba(244, 255, 248, 0.07);
-        color: #dcebe3;
-        font-size: 25px;
-        line-height: 1.22;
-        font-weight: 610;
+        gap: 10px;
+        color: #b9c9c0;
+        font-size: 20px;
+        font-weight: 720;
       }
 
-      .status-pill.active {
-        background: rgba(7, 193, 96, 0.16);
-        color: #f4fff8;
-        border: 1px solid rgba(7, 193, 96, 0.28);
-      }
-
-      .check {
+      .mini-logo {
         width: 25px;
         height: 25px;
-        flex: 0 0 auto;
-        display: grid;
-        place-items: center;
-        border-radius: 999px;
-        background: #07c160;
-        color: #07110d;
-        font-size: 17px;
-        font-weight: 900;
+        object-fit: contain;
+        padding: 4px;
+        border-radius: 8px;
+        background: #f4fff8;
+      }
+
+      .terminal-body {
+        padding: 28px 30px 32px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        font-family: "JetBrains Mono", "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+      }
+
+      .terminal-line {
+        min-height: 38px;
+        padding: 8px 0;
+        color: #dcebe3;
+        font-size: 23px;
+        line-height: 1.32;
+        font-weight: 650;
+        letter-spacing: 0;
+      }
+
+      .terminal-line.long-command {
+        font-size: 20px;
+        line-height: 1.24;
+      }
+
+      .prompt {
+        color: #07c160;
+      }
+
+      .dim {
+        color: #7f9388;
+      }
+
+      .ok {
+        color: #8ef3b0;
       }
 
       .phone {
         width: 354px;
         height: 720px;
-        padding: 18px;
+        padding: 17px;
         border-radius: 64px;
-        background: #0d1713;
-        border: 2px solid rgba(244, 255, 248, 0.12);
+        background: #111a16;
+        border: 2px solid rgba(18, 32, 24, 0.09);
         box-shadow:
-          inset 0 0 0 7px rgba(244, 255, 248, 0.04),
-          0 34px 86px rgba(0, 0, 0, 0.42);
+          inset 0 0 0 7px rgba(255, 255, 255, 0.05),
+          0 34px 86px rgba(53, 72, 61, 0.22);
       }
 
       .phone-screen {
@@ -305,19 +356,8 @@
         height: 100%;
         overflow: hidden;
         border-radius: 48px;
-        background: #f3f3f3;
+        background: #ededed;
         color: #111a16;
-      }
-
-      .phone-top {
-        height: 78px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        border-bottom: 1px solid rgba(0, 0, 0, 0.06);
-        background: rgba(246, 246, 246, 0.96);
-        font-size: 20px;
-        font-weight: 760;
       }
 
       .phone-notch {
@@ -329,217 +369,199 @@
         height: 24px;
         border-radius: 999px;
         background: #0d1713;
-        z-index: 5;
+        z-index: 8;
       }
 
-      .phone-body {
-        height: calc(100% - 78px);
-        padding: 24px 20px;
-        display: flex;
-        flex-direction: column;
-        gap: 18px;
-      }
-
-      .notification {
-        margin: 18px auto 0;
-        width: 284px;
-        padding: 18px 18px 16px;
-        border-radius: 28px;
-        background: rgba(255, 255, 255, 0.96);
-        box-shadow: 0 18px 44px rgba(0, 0, 0, 0.18);
-      }
-
-      .notification-app {
+      .status-bar {
+        height: 42px;
+        padding: 13px 22px 0;
         display: flex;
         align-items: center;
-        gap: 10px;
-        color: #5d6d63;
-        font-size: 17px;
-        font-weight: 740;
+        justify-content: space-between;
+        background: #f7f7f7;
+        font-size: 13px;
+        font-weight: 760;
+        color: #111;
       }
 
-      .app-dot {
-        width: 22px;
-        height: 22px;
+      .nav-bar {
+        height: 62px;
         display: grid;
-        place-items: center;
+        grid-template-columns: 48px 1fr 48px;
+        align-items: center;
+        padding: 0 12px;
+        border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+        background: #f7f7f7;
+      }
+
+      .nav-icon {
+        color: #111;
+        font-size: 26px;
+        font-weight: 500;
+        text-align: center;
+      }
+
+      .nav-title {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        font-size: 19px;
+        font-weight: 760;
+        color: #111;
+      }
+
+      .nav-logo {
+        width: 24px;
+        height: 24px;
+        object-fit: contain;
+        padding: 4px;
         border-radius: 7px;
-        background: #07c160;
-        color: white;
-        font-size: 14px;
-        font-weight: 900;
+        background: white;
       }
 
-      .notification-title {
-        margin-top: 12px;
-        font-size: 22px;
-        font-weight: 820;
-      }
-
-      .notification-text {
-        margin-top: 7px;
-        color: #657169;
-        font-size: 18px;
-        line-height: 1.3;
-        font-weight: 560;
-      }
-
-      .choice-row {
-        margin-top: 18px;
+      .chat-area {
+        height: calc(100% - 42px - 62px - 68px);
+        padding: 20px 18px 10px;
         display: flex;
-        gap: 11px;
+        flex-direction: column;
+        gap: 14px;
+        background: #ededed;
       }
 
-      .choice {
-        padding: 11px 15px;
-        border-radius: 999px;
-        font-size: 16px;
-        font-weight: 780;
-        white-space: nowrap;
-      }
-
-      .choice.primary {
-        background: #07c160;
-        color: white;
-      }
-
-      .choice.secondary {
-        background: #e9eee9;
-        color: #4c5c52;
-      }
-
-      .caption-card {
-        width: 100%;
-        padding: 24px 28px;
-        border-radius: 34px;
-        border: 1px solid rgba(244, 255, 248, 0.14);
-        background: rgba(23, 35, 30, 0.82);
-        color: #c8d8ce;
-        font-size: 29px;
-        line-height: 1.32;
-        font-weight: 630;
-        box-shadow: 0 24px 68px rgba(0, 0, 0, 0.28);
-      }
-
-      .caption-card strong {
-        color: #f4fff8;
-      }
-
-      .thread-card {
-        margin-top: 24px;
-        padding: 24px;
-        border-radius: 34px;
-        background: rgba(244, 255, 248, 0.08);
-        border: 1px solid rgba(244, 255, 248, 0.13);
-      }
-
-      .thread-card-title {
-        color: #a8b8af;
-        font-size: 21px;
-        font-weight: 720;
-      }
-
-      .thread-card-main {
-        margin-top: 12px;
-        font-size: 31px;
-        line-height: 1.22;
-        font-weight: 790;
-      }
-
-      .chip-grid {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 12px;
-        margin-top: 24px;
-      }
-
-      .chip {
-        padding: 12px 15px;
-        border-radius: 999px;
-        background: rgba(221, 247, 234, 0.09);
-        color: #c7dccf;
-        font-size: 20px;
+      .chat-time {
+        align-self: center;
+        padding: 4px 9px;
+        border-radius: 8px;
+        color: #8b8f8c;
+        background: rgba(0, 0, 0, 0.04);
+        font-size: 12px;
         font-weight: 690;
-        border: 1px solid rgba(221, 247, 234, 0.1);
       }
 
-      .command-pill {
-        margin-top: 24px;
-        width: fit-content;
-        max-width: 100%;
-        padding: 17px 22px;
-        border-radius: 999px;
-        background: #07c160;
-        color: #06130d;
-        font-size: 24px;
-        font-weight: 820;
-        box-shadow: 0 16px 38px rgba(7, 193, 96, 0.24);
+      .msg-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 9px;
       }
 
-      .chat-empty {
-        height: 160px;
+      .msg-row.right {
+        justify-content: flex-end;
+      }
+
+      .avatar {
+        width: 34px;
+        height: 34px;
+        flex: 0 0 auto;
         display: grid;
         place-items: center;
-        color: #a8b0ab;
-        font-size: 18px;
-        font-weight: 660;
+        border-radius: 9px;
+        background: #fff;
+        overflow: hidden;
+      }
+
+      .avatar img {
+        width: 24px;
+        height: 24px;
+        object-fit: contain;
+      }
+
+      .wechat-avatar {
+        background: #07c160;
       }
 
       .bubble {
-        max-width: 254px;
+        max-width: 244px;
         width: fit-content;
-        padding: 15px 17px;
-        border-radius: 23px;
-        font-size: 18px;
-        line-height: 1.34;
-        font-weight: 620;
+        padding: 12px 14px;
+        border-radius: 8px;
+        font-size: 17px;
+        line-height: 1.36;
+        font-weight: 640;
+        letter-spacing: 0;
+        box-shadow: 0 1px 0 rgba(0, 0, 0, 0.04);
+      }
+
+      .bubble.left {
+        background: white;
+        color: #111a16;
+        border-top-left-radius: 3px;
+      }
+
+      .bubble.right {
+        background: #95ec69;
+        color: #111a16;
+        border-top-right-radius: 3px;
       }
 
       .bubble.system {
         align-self: center;
-        max-width: 268px;
-        border-radius: 24px;
-        background: #e7f5ec;
-        color: #27643e;
+        max-width: 250px;
+        background: rgba(0, 0, 0, 0.06);
+        color: #677069;
         text-align: center;
-        font-weight: 780;
+        border-radius: 999px;
+        box-shadow: none;
+        font-size: 14px;
+        font-weight: 760;
       }
 
-      .bubble.assistant {
-        align-self: flex-start;
-        background: #fff;
-        color: #132019;
-        border-bottom-left-radius: 8px;
-      }
-
-      .bubble.user {
-        align-self: flex-end;
-        background: #07c160;
-        color: white;
-        border-bottom-right-radius: 8px;
-      }
-
-      .thread-tag {
-        display: inline-flex;
+      .input-bar {
+        height: 68px;
+        padding: 10px 12px;
+        display: flex;
         align-items: center;
         gap: 8px;
-        width: fit-content;
-        padding: 9px 12px;
+        background: #f7f7f7;
+        border-top: 1px solid rgba(0, 0, 0, 0.08);
+      }
+
+      .input-plus,
+      .input-emoji {
+        width: 30px;
+        height: 30px;
         border-radius: 999px;
-        background: rgba(7, 193, 96, 0.12);
-        color: #07c160;
+        display: grid;
+        place-items: center;
+        border: 1.5px solid #222;
+        color: #222;
         font-size: 17px;
-        font-weight: 820;
+        font-weight: 720;
+      }
+
+      .input-field {
+        flex: 1;
+        height: 42px;
+        border-radius: 8px;
+        background: white;
+      }
+
+      .caption-card {
+        width: 100%;
+        padding: 24px 0 0;
+        border-radius: 0;
+        border: 0;
+        border-top: 1px solid rgba(18, 32, 24, 0.12);
+        background: transparent;
+        color: #526259;
+        font-size: 38px;
+        line-height: 1.25;
+        font-weight: 700;
+        box-shadow: none;
+      }
+
+      .caption-card strong {
+        color: #122018;
       }
 
       .handoff-line {
         position: absolute;
         left: 550px;
-        top: 940px;
+        top: 974px;
         width: 168px;
         height: 6px;
         border-radius: 999px;
-        background: rgba(75, 98, 87, 0.62);
+        background: rgba(18, 32, 24, 0.14);
         z-index: 4;
       }
 
@@ -552,28 +574,6 @@
         box-shadow: 0 0 24px rgba(7, 193, 96, 0.7);
       }
 
-      .pull-card {
-        margin-top: 24px;
-        padding: 21px 23px;
-        border-radius: 30px;
-        background: rgba(7, 193, 96, 0.14);
-        border: 1px solid rgba(7, 193, 96, 0.28);
-      }
-
-      .pull-label {
-        color: #9cf1bd;
-        font-size: 20px;
-        font-weight: 760;
-      }
-
-      .pull-main {
-        margin-top: 10px;
-        color: #f4fff8;
-        font-size: 25px;
-        line-height: 1.28;
-        font-weight: 750;
-      }
-
       .closing-stack {
         align-items: center;
         justify-content: center;
@@ -582,36 +582,54 @@
       }
 
       .closing-title {
-        max-width: 900px;
+        max-width: 930px;
         font-size: 90px;
         line-height: 1.05;
         font-weight: 860;
       }
 
+      .closing-title.product-title {
+        font-size: 70px;
+        line-height: 1;
+      }
+
       .closing-title .accent {
-        color: #07c160;
+        color: #07a854;
+      }
+
+      .closing-statement {
+        color: #122018;
+        font-size: 42px;
+        line-height: 1.18;
+        font-weight: 740;
+        white-space: nowrap;
       }
 
       .closing-pills {
         display: flex;
         flex-wrap: wrap;
         justify-content: center;
-        gap: 16px;
+        gap: 0;
         max-width: 860px;
       }
 
       .closing-pill {
-        padding: 17px 22px;
-        border-radius: 999px;
-        background: rgba(244, 255, 248, 0.08);
-        border: 1px solid rgba(244, 255, 248, 0.12);
-        color: #cfe0d6;
+        padding: 0 22px;
+        border-radius: 0;
+        background: transparent;
+        border: 0;
+        border-right: 1px solid rgba(18, 32, 24, 0.18);
+        color: #526259;
         font-size: 25px;
         font-weight: 720;
       }
 
+      .closing-pill:last-child {
+        border-right: 0;
+      }
+
       .brand-name {
-        color: #a8b8af;
+        color: #5c6b63;
         font-size: 31px;
         font-weight: 710;
       }
@@ -628,9 +646,9 @@
         left: -130px;
         top: 290px;
         border-radius: 999px;
-        background: #07c160;
-        opacity: 0.96;
-        box-shadow: 0 0 90px rgba(7, 193, 96, 0.34);
+        background: linear-gradient(135deg, rgba(113, 103, 255, 0.92), rgba(7, 193, 96, 0.88));
+        opacity: 0.92;
+        box-shadow: 0 0 90px rgba(113, 103, 255, 0.22);
       }
     </style>
   </head>
@@ -639,7 +657,7 @@
       id="root"
       data-composition-id="main"
       data-start="0"
-      data-duration="32"
+      data-duration="40"
       data-width="1080"
       data-height="1920"
     >
@@ -647,42 +665,53 @@
         id="ambient"
         class="clip ambient"
         data-start="0"
-        data-duration="32"
+        data-duration="40"
         data-track-index="0"
       >
         <div class="grain"></div>
-        <div class="glow glow-a"></div>
-        <div class="glow glow-b"></div>
-        <div class="orb one"></div>
-        <div class="orb two"></div>
+        <div class="glow glow-a" data-layout-ignore></div>
+        <div class="glow glow-b" data-layout-ignore></div>
       </div>
+
+      <audio
+        id="music-bed"
+        class="clip"
+        data-start="0"
+        data-duration="40"
+        data-track-index="20"
+        data-volume="1"
+        src="assets/audio/playful-tech-bed.mp3"
+      ></audio>
 
       <section
         id="scene-intro"
         class="clip scene"
         data-start="0"
-        data-duration="4.2"
+        data-duration="5.6"
         data-track-index="1"
       >
-        <div class="logo-row intro-logo">
-          <div class="logo-token">Codex</div>
+        <div class="brand-lockup intro-lockup">
+          <div class="brand-chip codex-chip">
+            <img class="codex-mark" src="assets/logos/codex-logo.svg" alt="Codex" />
+            <span class="chip-name">Codex</span>
+          </div>
           <div class="separator"></div>
-          <div class="logo-token wechat">微信</div>
+          <div class="brand-chip wechat-chip">
+            <img class="wechat-mark" src="assets/logos/wechat-logo.svg" alt="微信" />
+          </div>
         </div>
         <h1 class="headline center intro-headline">
-          <span>跑完提醒你，</span>
-          <span>换个界面继续。</span>
+          <span>别让 Codex</span>
+          <span>只坐在电脑前等你。</span>
         </h1>
-        <p class="subline center intro-subline">
-          Codex WeChat Handoff
-        </p>
+        <p class="subline center intro-subline">微信来汇报，离开电脑也能继续指挥它。</p>
       </section>
 
       <div
         id="transition-1"
         class="clip transition"
-        data-start="3.78"
-        data-duration="1.05"
+        data-start="5"
+        data-duration="1.2"
         data-track-index="8"
       >
         <div class="wipe-bubble"></div>
@@ -691,70 +720,76 @@
       <section
         id="scene-notify"
         class="clip scene"
-        data-start="4.2"
-        data-duration="10.2"
+        data-start="5.6"
+        data-duration="13.4"
         data-track-index="2"
       >
-        <div class="eyebrow notify-eyebrow">
-          <span class="eyebrow-dot"></span>
-          Case 1 · 完成提醒
-        </div>
-        <h2 class="headline notify-headline">Codex 跑完了，微信告诉你。</h2>
+        <h2 class="headline notify-headline">
+          <span>电脑上的 Codex</span>
+          <span>任务完成后<em class="wechat-highlight">微信通知</em>你</span>
+        </h2>
         <div class="interface-row notify-row">
-          <div class="desktop notify-desktop">
-            <div class="window-bar">
+          <div class="terminal notify-terminal">
+            <div class="terminal-top">
               <div class="traffic"><span></span><span></span><span></span></div>
-              Codex Desktop
+              <div class="terminal-title">
+                <img class="mini-logo" src="assets/logos/codex-logo.svg" alt="Codex" />
+                Codex CLI
+              </div>
             </div>
-            <div class="desktop-title">处理前端 diff 和风险点</div>
-            <div class="status-stack">
-              <div class="status-pill">
-                <span class="check">✓</span>
-                已检查改动范围
-              </div>
-              <div class="status-pill">
-                <span class="check">✓</span>
-                测试通过
-              </div>
-              <div class="status-pill active">
-                <span class="check">✓</span>
-                下一步：决定是否继续
-              </div>
+            <div class="terminal-body">
+              <div class="terminal-line"><span class="prompt">$</span> codex run</div>
+              <div class="terminal-line"><span class="ok">✓</span> 已检查前端 diff</div>
+              <div class="terminal-line"><span class="ok">✓</span> 测试通过</div>
+              <div class="terminal-line"><span class="ok">✓</span> 风险点已整理</div>
+              <div class="terminal-line long-command"><span class="prompt">$</span> codex-wechat notify-finish on --to last</div>
+              <div class="terminal-line"><span class="ok">✓</span> finish_notify: on</div>
+              <div class="terminal-line"><span class="dim">source:</span> thread</div>
+              <div class="terminal-line"><span class="dim">sender:</span> last</div>
             </div>
           </div>
           <div class="phone notify-phone">
             <div class="phone-screen">
               <div class="phone-notch"></div>
-              <div class="phone-top">微信</div>
-              <div class="phone-body">
-                <div class="notification">
-                  <div class="notification-app">
-                    <span class="app-dot">C</span>
-                    Codex
-                  </div>
-                  <div class="notification-title">这次 run 完成了</div>
-                  <div class="notification-text">
-                    已整理 diff 风险。下一步：决定要不要继续。
-                  </div>
-                  <div class="choice-row">
-                    <div class="choice primary">/continue</div>
-                    <div class="choice secondary">先不回</div>
-                  </div>
+              <div class="status-bar">
+                <span>09:41</span>
+                <span>5G  85%</span>
+              </div>
+              <div class="nav-bar">
+                <div class="nav-icon">‹</div>
+                <div class="nav-title">
+                  <img class="nav-logo" src="assets/logos/codex-logo.svg" alt="Codex" />
+                  Codex
                 </div>
+                <div class="nav-icon">···</div>
+              </div>
+              <div class="chat-area">
+                <div class="chat-time">今天 09:41</div>
+                <div class="msg-row left">
+                  <div class="avatar">
+                    <img src="assets/logos/codex-logo.svg" alt="Codex" />
+                  </div>
+                  <div class="bubble left">我跑完了。diff 风险已整理。下一步：要不要继续处理？</div>
+                </div>
+              </div>
+              <div class="input-bar">
+                <div class="input-plus">＋</div>
+                <div class="input-field"></div>
+                <div class="input-emoji">⌁</div>
               </div>
             </div>
           </div>
         </div>
         <div class="caption-card notify-caption">
-          <strong>回复 /continue</strong> 才从手机继续；不回复，当前微信会话不被打断。
+          让 Codex 自己加会儿班，<strong>你先下楼透透气。</strong>
         </div>
       </section>
 
       <div
         id="transition-2"
         class="clip transition"
-        data-start="13.98"
-        data-duration="1.08"
+        data-start="18.4"
+        data-duration="1.2"
         data-track-index="9"
       >
         <div class="wipe-bubble"></div>
@@ -763,64 +798,88 @@
       <section
         id="scene-handoff"
         class="clip scene"
-        data-start="14.4"
-        data-duration="12.4"
+        data-start="19"
+        data-duration="14.8"
         data-track-index="3"
       >
-        <div class="eyebrow handoff-eyebrow">
-          <span class="eyebrow-dot"></span>
-          Case 2 · 同一个 thread
-        </div>
         <h2 class="headline handoff-headline">
-          同一个 Codex thread，换成微信继续工作。
+          <span>临时要出门</span>
+          <span>当前任务接到微信</span>
+          <span><em class="wechat-highlight">在手机上继续推进</em></span>
         </h2>
         <div class="interface-row handoff-row">
-          <div class="desktop handoff-desktop">
-            <div class="window-bar">
+          <div class="terminal handoff-terminal">
+            <div class="terminal-top">
               <div class="traffic"><span></span><span></span><span></span></div>
-              Codex Desktop
-            </div>
-            <div class="thread-card">
-              <div class="thread-card-title">当前 thread 已经聊到一半</div>
-              <div class="thread-card-main">项目背景、约束和下一步都在这里。</div>
-              <div class="chip-grid">
-                <div class="chip">项目背景</div>
-                <div class="chip">设计限制</div>
-                <div class="chip">相关文件</div>
-                <div class="chip">下一步</div>
+              <div class="terminal-title">
+                <img class="mini-logo" src="assets/logos/codex-logo.svg" alt="Codex" />
+                Codex CLI
               </div>
             </div>
-            <div class="command-pill">carry this to WeChat</div>
-            <div class="pull-card">
-              <div class="pull-label">回到电脑后</div>
-              <div class="pull-main">pull WeChat back，把手机上的进展带回 Desktop。</div>
+            <div class="terminal-body">
+              <div class="terminal-line"><span class="dim">thread</span> frontend-design-review</div>
+              <div class="terminal-line"><span class="dim">context</span> project · files · next step</div>
+              <div class="terminal-line"><span class="prompt">$</span> codex-wechat carry</div>
+              <div class="terminal-line"><span class="ok">✓</span> handoff: created</div>
+              <div class="terminal-line"><span class="ok">✓</span> notification: sent</div>
+              <div class="terminal-line"><span class="prompt">$</span> codex-wechat pull</div>
+              <div class="terminal-line"><span class="dim">WeChat raw handoff</span></div>
+              <div class="terminal-line"><span class="ok">✓</span> lease: desktop_active</div>
             </div>
           </div>
           <div class="handoff-line"><span class="line-pulse"></span></div>
           <div class="phone handoff-phone">
             <div class="phone-screen">
               <div class="phone-notch"></div>
-              <div class="phone-top">Codex · 微信</div>
-              <div class="phone-body">
-                <div class="chat-empty">手机上打开的是同一段工作流</div>
-                <div class="bubble system">continue from here</div>
-                <div class="thread-tag">同一个 thread 已接上</div>
-                <div class="bubble user">继续刚才的方案，帮我整理风险点。</div>
-                <div class="bubble assistant">收到，沿用刚才上下文继续。</div>
+              <div class="status-bar">
+                <span>09:42</span>
+                <span>5G  84%</span>
+              </div>
+              <div class="nav-bar">
+                <div class="nav-icon">‹</div>
+                <div class="nav-title">
+                  <img class="nav-logo" src="assets/logos/codex-logo.svg" alt="Codex" />
+                  Codex
+                </div>
+                <div class="nav-icon">···</div>
+              </div>
+              <div class="chat-area">
+                <div class="chat-time">今天 09:42</div>
+                <div class="bubble system">接上当前 Codex thread</div>
+                <div class="msg-row left">
+                  <div class="avatar">
+                    <img src="assets/logos/codex-logo.svg" alt="Codex" />
+                  </div>
+                  <div class="bubble left">同一个 thread 已接上，已有上下文都在。</div>
+                </div>
+                <div class="msg-row right">
+                  <div class="bubble right">继续刚才的方案，帮我整理风险点。</div>
+                </div>
+                <div class="msg-row left">
+                  <div class="avatar">
+                    <img src="assets/logos/codex-logo.svg" alt="Codex" />
+                  </div>
+                  <div class="bubble left">收到，沿用刚才的上下文继续。</div>
+                </div>
+              </div>
+              <div class="input-bar">
+                <div class="input-plus">＋</div>
+                <div class="input-field"></div>
+                <div class="input-emoji">⌁</div>
               </div>
             </div>
           </div>
         </div>
         <div class="caption-card handoff-caption">
-          不是新开一个空白 bot。是 <strong>same thread，different interface</strong>。
+          别给 Codex <strong>趁你出去摸鱼的机会。</strong>
         </div>
       </section>
 
       <div
         id="transition-3"
         class="clip transition"
-        data-start="26.42"
-        data-duration="1.05"
+        data-start="33.2"
+        data-duration="1.2"
         data-track-index="10"
       >
         <div class="wipe-bubble"></div>
@@ -829,25 +888,24 @@
       <section
         id="scene-closing"
         class="clip scene closing-stack"
-        data-start="26.8"
-        data-duration="5.2"
+        data-start="33.8"
+        data-duration="6.2"
         data-track-index="4"
       >
-        <div class="logo-row closing-logo">
-          <div class="logo-token">Codex</div>
+        <div class="brand-lockup closing-lockup">
+          <div class="brand-chip codex-chip">
+            <img class="codex-mark" src="assets/logos/codex-logo.svg" alt="Codex" />
+            <span class="chip-name">Codex</span>
+          </div>
           <div class="separator"></div>
-          <div class="logo-token wechat">微信</div>
+          <div class="brand-chip wechat-chip">
+            <img class="wechat-mark" src="assets/logos/wechat-logo.svg" alt="微信" />
+          </div>
         </div>
-        <h2 class="closing-title">
-          <span class="accent">同一个 thread，</span>
-          <span>不同界面继续工作。</span>
+        <h2 class="closing-title product-title">
+          <span>Codex WeChat Handoff</span>
         </h2>
-        <div class="closing-pills">
-          <div class="closing-pill">跑完微信提醒</div>
-          <div class="closing-pill">手机继续工作</div>
-          <div class="closing-pill">回电脑 pull back</div>
-        </div>
-        <div class="brand-name">Codex WeChat Handoff</div>
+        <div class="closing-statement">让电脑上的 Codex，和微信无缝衔接。</div>
       </section>
     </div>
 
@@ -856,58 +914,47 @@
       const tl = gsap.timeline({ paused: true });
 
       tl.from(".grain", { opacity: 0, duration: 0.8, ease: "sine.out" }, 0.1);
-      tl.to(".glow-a", { scale: 1.14, x: 26, y: 18, duration: 8, repeat: 3, yoyo: true, ease: "sine.inOut" }, 0);
-      tl.to(".glow-b", { scale: 1.12, x: -28, y: -24, duration: 9, repeat: 3, yoyo: true, ease: "sine.inOut" }, 0.2);
-      tl.to(".orb.one", { y: -44, x: 22, duration: 5.4, repeat: 5, yoyo: true, ease: "sine.inOut" }, 0.1);
-      tl.to(".orb.two", { y: 34, x: -18, duration: 4.8, repeat: 6, yoyo: true, ease: "sine.inOut" }, 0.4);
-
-      tl.from(".intro-logo .logo-token", { y: 36, scale: 0.86, opacity: 0, duration: 0.64, stagger: 0.12, ease: "back.out(1.8)" }, 0.24);
-      tl.from(".intro-logo .separator", { scaleY: 0, opacity: 0, duration: 0.52, ease: "power3.out" }, 0.46);
+      tl.to(".glow-a", { scale: 1.14, x: 26, y: 18, duration: 8, repeat: 4, yoyo: true, ease: "sine.inOut" }, 0);
+      tl.to(".glow-b", { scale: 1.12, x: -28, y: -24, duration: 9, repeat: 4, yoyo: true, ease: "sine.inOut" }, 0.2);
+      tl.from(".intro-lockup .brand-chip", { y: 36, scale: 0.86, opacity: 0, duration: 0.64, stagger: 0.12, ease: "back.out(1.8)" }, 0.24);
+      tl.from(".intro-lockup .separator", { scaleY: 0, opacity: 0, duration: 0.52, ease: "power3.out" }, 0.46);
       tl.from(".intro-headline", { y: 48, opacity: 0, duration: 0.7, ease: "expo.out" }, 0.88);
       tl.from(".intro-subline", { y: 26, opacity: 0, duration: 0.52, ease: "power2.out" }, 1.18);
 
-      tl.from("#transition-1 .wipe-bubble", { scale: 0, x: 540, y: -120, duration: 0.46, ease: "power4.in" }, 3.78);
-      tl.to("#transition-1 .wipe-bubble", { scale: 0, x: -520, y: 140, duration: 0.48, ease: "power3.out" }, 4.32);
+      tl.from("#transition-1 .wipe-bubble", { scale: 0, x: 540, y: -120, duration: 0.56, ease: "power4.in" }, 5);
+      tl.to("#transition-1 .wipe-bubble", { scale: 0, x: -520, y: 140, duration: 0.58, ease: "power3.out" }, 5.64);
 
-      tl.from(".notify-eyebrow", { x: -34, scale: 0.94, opacity: 0, duration: 0.5, ease: "back.out(1.5)" }, 4.46);
-      tl.from(".notify-headline", { y: 46, opacity: 0, duration: 0.66, ease: "expo.out" }, 4.72);
-      tl.from(".notify-desktop", { x: -54, y: 22, rotation: -2, opacity: 0, duration: 0.72, ease: "power3.out" }, 5.12);
-      tl.from(".notify-phone", { x: 58, y: 32, rotation: 2, opacity: 0, duration: 0.72, ease: "back.out(1.35)" }, 5.28);
-      tl.from(".notify-desktop .status-pill", { y: 24, opacity: 0, scale: 0.96, duration: 0.42, stagger: 0.14, ease: "power2.out" }, 5.82);
-      tl.from(".notification", { y: -38, scale: 0.9, opacity: 0, duration: 0.58, ease: "back.out(1.65)" }, 6.52);
-      tl.from(".notification .choice", { y: 18, scale: 0.9, opacity: 0, duration: 0.36, stagger: 0.09, ease: "power3.out" }, 7.18);
-      tl.from(".notify-caption", { y: 34, opacity: 0, scale: 0.97, duration: 0.54, ease: "circ.out" }, 7.66);
-      tl.to(".choice.primary", { scale: 1.08, duration: 0.28, repeat: 3, yoyo: true, ease: "sine.inOut" }, 8.7);
+      tl.from(".notify-headline", { y: 46, opacity: 0, duration: 0.78, ease: "expo.out" }, 6.3);
+      tl.from(".notify-terminal", { x: -54, y: 22, rotation: -1.4, opacity: 0, duration: 0.86, ease: "power3.out" }, 7.02);
+      tl.from(".notify-phone", { x: 58, y: 32, rotation: 1.6, opacity: 0, duration: 0.86, ease: "back.out(1.25)" }, 7.36);
+      tl.from(".notify-terminal .terminal-line", { y: 18, opacity: 0, duration: 0.38, stagger: 0.16, ease: "power2.out" }, 8.18);
+      tl.from(".notify-phone .chat-time", { y: 12, opacity: 0, duration: 0.38, ease: "power2.out" }, 9.9);
+      tl.from(".notify-phone .msg-row", { y: 18, scale: 0.96, opacity: 0, duration: 0.52, ease: "back.out(1.35)" }, 10.42);
+      tl.from(".notify-caption", { y: 34, opacity: 0, scale: 0.98, duration: 0.66, ease: "circ.out" }, 12.28);
+      tl.to(".notify-phone .bubble.left", { scale: 1.035, duration: 0.42, repeat: 2, yoyo: true, ease: "sine.inOut" }, 13.35);
 
-      tl.from("#transition-2 .wipe-bubble", { scale: 0, x: -540, y: 130, duration: 0.48, ease: "power4.in" }, 13.98);
-      tl.to("#transition-2 .wipe-bubble", { scale: 0, x: 520, y: -140, duration: 0.5, ease: "power3.out" }, 14.54);
+      tl.from("#transition-2 .wipe-bubble", { scale: 0, x: -540, y: 130, duration: 0.56, ease: "power4.in" }, 18.4);
+      tl.to("#transition-2 .wipe-bubble", { scale: 0, x: 520, y: -140, duration: 0.58, ease: "power3.out" }, 19.04);
 
-      tl.from(".handoff-eyebrow", { x: -34, scale: 0.94, opacity: 0, duration: 0.5, ease: "back.out(1.5)" }, 14.66);
-      tl.from(".handoff-headline", { y: 48, opacity: 0, duration: 0.68, ease: "expo.out" }, 14.92);
-      tl.from(".handoff-desktop", { x: -56, y: 24, rotation: -1.8, opacity: 0, duration: 0.72, ease: "power3.out" }, 15.34);
-      tl.from(".thread-card", { y: 30, scale: 0.96, opacity: 0, duration: 0.54, ease: "circ.out" }, 15.78);
-      tl.from(".chip", { y: 18, opacity: 0, scale: 0.88, duration: 0.34, stagger: 0.07, ease: "back.out(1.55)" }, 16.16);
-      tl.from(".command-pill", { y: 22, scale: 0.9, opacity: 0, duration: 0.42, ease: "back.out(1.8)" }, 16.7);
-      tl.from(".handoff-line", { scaleX: 0, transformOrigin: "left center", opacity: 0, duration: 0.54, ease: "power3.out" }, 17.12);
-      tl.to(".line-pulse", { x: 118, duration: 0.8, repeat: 5, yoyo: true, ease: "sine.inOut" }, 17.18);
-      tl.from(".handoff-phone", { x: 58, y: 28, rotation: 2, opacity: 0, duration: 0.7, ease: "back.out(1.35)" }, 17.32);
-      tl.from(".chat-empty", { y: 18, opacity: 0, duration: 0.44, ease: "power2.out" }, 17.82);
-      tl.from(".bubble.system", { y: 20, scale: 0.9, opacity: 0, duration: 0.42, ease: "back.out(1.7)" }, 18.38);
-      tl.from(".thread-tag", { y: 18, scale: 0.9, opacity: 0, duration: 0.38, ease: "power3.out" }, 18.86);
-      tl.from(".bubble.user", { x: 34, scale: 0.94, opacity: 0, duration: 0.44, ease: "back.out(1.45)" }, 19.36);
-      tl.from(".bubble.assistant", { x: -34, scale: 0.94, opacity: 0, duration: 0.44, ease: "power3.out" }, 19.92);
-      tl.from(".pull-card", { y: 24, opacity: 0, scale: 0.96, duration: 0.5, ease: "circ.out" }, 20.72);
-      tl.from(".handoff-caption", { y: 34, opacity: 0, scale: 0.97, duration: 0.54, ease: "power2.out" }, 21.42);
+      tl.from(".handoff-headline", { y: 48, opacity: 0, duration: 0.8, ease: "expo.out" }, 19.76);
+      tl.from(".handoff-terminal", { x: -56, y: 24, rotation: -1.4, opacity: 0, duration: 0.86, ease: "power3.out" }, 20.68);
+      tl.from(".handoff-terminal .terminal-line", { y: 18, opacity: 0, duration: 0.38, stagger: 0.14, ease: "power2.out" }, 21.34);
+      tl.from(".handoff-line", { scaleX: 0, transformOrigin: "left center", opacity: 0, duration: 0.66, ease: "power3.out" }, 23.42);
+      tl.to(".line-pulse", { x: 118, duration: 1.05, repeat: 6, yoyo: true, ease: "sine.inOut" }, 23.48);
+      tl.from(".handoff-phone", { x: 58, y: 28, rotation: 1.6, opacity: 0, duration: 0.86, ease: "back.out(1.25)" }, 23.9);
+      tl.from(".handoff-phone .chat-time", { y: 12, opacity: 0, duration: 0.38, ease: "power2.out" }, 24.72);
+      tl.from(".handoff-phone .bubble.system", { y: 15, scale: 0.92, opacity: 0, duration: 0.46, ease: "back.out(1.55)" }, 25.12);
+      tl.from(".handoff-phone .msg-row", { y: 18, scale: 0.96, opacity: 0, duration: 0.52, stagger: 0.42, ease: "back.out(1.35)" }, 25.72);
+      tl.from(".handoff-caption", { y: 34, opacity: 0, scale: 0.98, duration: 0.66, ease: "power2.out" }, 29.1);
 
-      tl.from("#transition-3 .wipe-bubble", { scale: 0, x: 520, y: 130, duration: 0.48, ease: "power4.in" }, 26.42);
-      tl.to("#transition-3 .wipe-bubble", { scale: 0, x: -520, y: -130, duration: 0.5, ease: "power3.out" }, 26.98);
+      tl.from("#transition-3 .wipe-bubble", { scale: 0, x: 520, y: 130, duration: 0.56, ease: "power4.in" }, 33.2);
+      tl.to("#transition-3 .wipe-bubble", { scale: 0, x: -520, y: -130, duration: 0.58, ease: "power3.out" }, 33.84);
 
-      tl.from(".closing-logo .logo-token", { y: 34, scale: 0.86, opacity: 0, duration: 0.6, stagger: 0.1, ease: "back.out(1.8)" }, 27.1);
-      tl.from(".closing-logo .separator", { scaleY: 0, opacity: 0, duration: 0.5, ease: "power3.out" }, 27.28);
-      tl.from(".closing-title", { y: 50, opacity: 0, duration: 0.72, ease: "expo.out" }, 27.76);
-      tl.from(".closing-pill", { y: 24, scale: 0.92, opacity: 0, duration: 0.4, stagger: 0.11, ease: "back.out(1.5)" }, 28.52);
-      tl.from(".brand-name", { y: 18, opacity: 0, duration: 0.44, ease: "power2.out" }, 29.18);
-      tl.to("#scene-closing", { opacity: 0, duration: 0.5, ease: "sine.in" }, 31.4);
+      tl.from(".closing-lockup .brand-chip", { y: 34, scale: 0.9, opacity: 0, duration: 0.7, stagger: 0.12, ease: "back.out(1.55)" }, 34.06);
+      tl.from(".closing-lockup .separator", { scaleY: 0, opacity: 0, duration: 0.58, ease: "power3.out" }, 34.3);
+      tl.from(".closing-title", { y: 50, opacity: 0, duration: 0.82, ease: "expo.out" }, 35.08);
+      tl.from(".closing-statement", { y: 22, opacity: 0, duration: 0.5, ease: "power3.out" }, 36.28);
+      tl.to("#scene-closing", { opacity: 0, duration: 0.5, ease: "sine.in" }, 39.4);
 
       window.__timelines["main"] = tl;
     </script>

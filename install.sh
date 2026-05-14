@@ -57,14 +57,30 @@ fi
 
 REPO_URL="${CODEX_WECHAT_HANDOFF_REPO:-https://github.com/FUY25/codex-wechat-handoff.git}"
 REPO_DIR="${CODEX_WECHAT_HANDOFF_DIR:-$HOME/.codex-wechat-handoff/app}"
+SPARSE_PATHS=(
+  "/bin/codex-wechat"
+  "/bun.lock"
+  "/codex-wechat-ilink.ts"
+  "/install.sh"
+  "/LICENSE"
+  "/package.json"
+  "/projects.example.json"
+  "/scripts/install-launch-agent.sh"
+  "/scripts/uninstall-launch-agent.sh"
+  "/skills/codex-wechat/SKILL.md"
+)
 
 mkdir -p "$(dirname "$REPO_DIR")"
 
 if [ ! -d "$REPO_DIR/.git" ]; then
-  git clone "$REPO_URL" "$REPO_DIR"
+  git clone --filter=blob:none --sparse "$REPO_URL" "$REPO_DIR"
 else
-  git -C "$REPO_DIR" pull --ff-only
+  git -C "$REPO_DIR" fetch origin
 fi
+
+git -C "$REPO_DIR" sparse-checkout init --no-cone
+git -C "$REPO_DIR" sparse-checkout set "${SPARSE_PATHS[@]}"
+git -C "$REPO_DIR" pull --ff-only
 
 bun install --cwd "$REPO_DIR"
 

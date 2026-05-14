@@ -109,22 +109,14 @@ The core is not opening a new bot chat. The core is handing context between Desk
 
 ## Demo
 
-Demo video is in progress. The first version will show the full handoff loop:
+[![Codex WeChat Handoff demo](docs/readme-media/codex-wechat-handoff-demo-poster.jpg)](docs/readme-media/codex-wechat-handoff-demo.mp4)
 
-```text
-Desktop Codex thread -> WeChat continuation -> Desktop pull-back
-```
+Click the image to watch the demo video.
 
-We will use HyperFrames animation to show this story:
+It shows two common moments when you leave your computer:
 
-```text
-A Codex thread on your computer already has context
-  -> you do not want to re-explain everything on your phone
-  -> carry this to WeChat
-  -> continue that context in WeChat
-  -> pull WeChat back
-  -> keep going on your computer
-```
+- Codex finishes a task on your computer and notifies you in WeChat.
+- When you need to step out, move the current task into WeChat and keep pushing it forward from your phone.
 
 ## One-Line Install
 

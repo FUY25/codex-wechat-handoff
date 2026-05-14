@@ -3,6 +3,16 @@
   "version": "0.1.0",
   "private": false,
   "type": "module",
+  "files": [
+    "bin/",
+    "scripts/",
+    "skills/",
+    "codex-wechat-ilink.ts",
+    "projects.example.json",
+    "LICENSE",
+    "README.md",
+    "README.en.md"
+  ],
   "bin": {
     "codex-wechat": "./bin/codex-wechat"
   },

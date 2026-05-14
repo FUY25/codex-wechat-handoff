@@ -109,22 +109,14 @@ Codex WeChat Handoff 更关注另一个问题：
 
 ## Demo
 
-Demo 视频制作中。第一版会展示完整接力流程：
+[![Codex WeChat Handoff demo](docs/readme-media/codex-wechat-handoff-demo-poster.jpg)](docs/readme-media/codex-wechat-handoff-demo.mp4)
 
-```text
-电脑上的 Codex 上下文 -> 微信 continuation -> 回电脑 pull back
-```
+点击图片看 demo 视频。
 
-我们会用 HyperFrames 动画表现这个故事：
+它展示两个最常见的离开电脑场景：
 
-```text
-电脑上的 Codex thread 已经聊到一半
-  -> 不想在手机上重新解释上下文
-  -> carry this to WeChat
-  -> 微信继续这段上下文
-  -> pull WeChat back
-  -> 回到电脑继续
-```
+- 电脑上的 Codex 任务完成后，用微信通知你。
+- 临时要出门时，把当前任务接到微信，在手机上继续推进。
 
 ## 一行安装
 
