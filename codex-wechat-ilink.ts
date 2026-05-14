@@ -2326,10 +2326,10 @@ export function buildOnboardingMessage(): string {
     "/project <name> 切项目",
     "/mode read|write|fullaccess 改权限",
     "/model 查看或设置模型",
-    "/status 查看当前 thread",
+    "/status 查看当前 session 是 mobile native 还是 carry-over",
     "/new 开一个新的手机侧 project session；Desktop carry-over 中会被拦截。",
     "/stop 查看当前停止能力；安全 interrupt 还在开发中。",
-  "/notify status 查看 finish-run 微信提醒；开关只能在 Desktop/CLI 控制。",
+    "/notify status 查看 finish-run 微信提醒；开关只能在 Desktop/CLI 控制。",
     "/continue 从 finish-run 提醒接管到手机；忽略提醒不会改变当前微信 state。",
     "/help 查看全部命令",
     "",
@@ -2360,6 +2360,22 @@ function describeModePermission(mode: BridgeMode): string {
   if (mode === "read") return "read = read/search any readable local files + network; no writes";
   if (mode === "write") return "write = read/search any readable local files + network; writes only inside the project cwd";
   return "fullaccess = unrestricted local access";
+}
+
+export function describeWechatSessionState(route?: SenderProjectRoute): string {
+  if (!route?.attachedThreadId) return "mobile native";
+  if (route.leaseState === "wechat_active") return "carry-over from Desktop (phone active)";
+  if (route.leaseState === "desktop_active") return "carry-over from Desktop (paused; Desktop active)";
+  if (route.leaseState === "pending_desktop_pull") return "carry-over from Desktop (waiting Desktop pull)";
+  return "carry-over from Desktop";
+}
+
+function describeWechatSessionNextAction(route?: SenderProjectRoute): string | null {
+  if (!route?.attachedThreadId) return null;
+  if (route.leaseState === "wechat_active") return "next: reply in WeChat to continue; when back at Desktop, say pull WeChat back";
+  if (route.leaseState === "desktop_active") return "next: /resume to continue from phone, or /detach to return to mobile native";
+  if (route.leaseState === "pending_desktop_pull") return "next: run pull WeChat back on Desktop before continuing there; or /resume /detach";
+  return null;
 }
 
 function normalizeStoredMode(mode: StoredBridgeMode | undefined, fallback: BridgeMode): BridgeMode {
@@ -2711,10 +2727,12 @@ export function applyBridgeCommand(
       handled: true,
       reply: [
         `project: ${projectName}`,
+        `session: ${describeWechatSessionState(route)}`,
         `mode: ${mode}`,
         `model: ${model ?? "default"}`,
         `thread: ${route?.attachedThreadId ?? session?.threadId ?? "none"}`,
         `lease: ${route?.leaseState ?? "wechat_owned"}`,
+        ...(describeWechatSessionNextAction(route) ? [describeWechatSessionNextAction(route)!] : []),
         ...(options.contextPressure ? [formatCodexContextPressureLine(options.contextPressure)] : []),
         `cwd: ${project.cwd}`,
       ].join("\n"),
@@ -2726,12 +2744,14 @@ export function applyBridgeCommand(
       handled: true,
       reply: [
         `project: ${projectName}`,
+        `session: ${describeWechatSessionState(route)}`,
         `mode: ${mode}`,
         `model: ${model ?? "default"}`,
         `surface: ${route?.activeSurface ?? "wechat"}`,
         `lease: ${route?.leaseState ?? "wechat_owned"}`,
         `thread: ${route?.attachedThreadId ?? session?.threadId ?? "none"}`,
         `parked_thread: ${route?.parkedThreadId ?? "none"}`,
+        ...(describeWechatSessionNextAction(route) ? [describeWechatSessionNextAction(route)!] : []),
         ...(options.contextPressure ? [formatCodexContextPressureLine(options.contextPressure)] : []),
         `cwd: ${project.cwd}`,
       ].join("\n"),
@@ -4555,10 +4575,12 @@ async function commandCarryStatus(options: RuntimeOptions, args: Args): Promise<
     lines.push(
       [
         `sender: ${senderId}`,
+        `session: ${describeWechatSessionState(route)}`,
         `thread: ${route?.attachedThreadId ?? session?.threadId ?? "none"}`,
         `lease: ${route?.leaseState ?? "wechat_owned"}`,
         `surface: ${route?.activeSurface ?? "wechat"}`,
         `parked: ${route?.parkedThreadId ?? "none"}`,
+        ...(describeWechatSessionNextAction(route) ? [describeWechatSessionNextAction(route)!] : []),
         ...(contextPressure ? [formatCodexContextPressureLine(contextPressure)] : []),
       ].join("\n"),
     );

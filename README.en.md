@@ -89,7 +89,7 @@ Many phone-control tools focus on watching runtime state, approving actions, or 
 
 Codex WeChat Handoff focuses on a different problem:
 
-> I already built up useful context in a Codex thread on my computer. Can I continue that exact thread from WeChat?
+> I already built up useful context in a Codex thread on my computer. Can I continue from that context in WeChat?
 
 The core is not opening a new bot chat. The core is handing context between Desktop/CLI, WeChat continuation, and normal mobile sessions.
 
@@ -366,7 +366,7 @@ Finish-run toggles are controlled from Desktop/CLI. WeChat-side `/notify status`
 /model                 show current model
 /model <name>          set model override for this sender + project
 /model default         clear model override
-/status                show project, mode, model, thread, lease, cwd
+/status                show current session type, project, mode, model, thread, lease, cwd
 /health                show daemon and recent bridge health
 /current               show current route and parked thread
 /sessions              show sender project sessions
@@ -393,7 +393,23 @@ Permission modes:
 
 `/mode bypass` is kept as a legacy alias for `/mode fullaccess`.
 
-If a long-running Desktop thread or mobile continuation exceeds the model context window, Codex may compact or summarize internally. The bridge hands context back and forth with raw transcript deltas; compaction behavior belongs to Codex itself.
+If a Desktop thread is near or at the model context window, the bridge reads local Codex rollout token usage before carrying/forking. The status appears in `/status`, `carry-status`, and carry notifications, for example `context: high (90%, 90k/100k)`. If the state is `critical` or `saturated`, the bridge blocks native fork and tells you to run `/compact` in the current Desktop/CLI thread before retrying.
+
+The bridge does not silently fall back to summary handoff, so you do not mistake a summarized phone session for a full native thread. Phone-side work and pull-back still use raw transcript deltas for context transfer.
+
+`/status` explicitly tells you whether the phone is in a normal mobile session or a Desktop carry-over:
+
+```text
+session: mobile native
+```
+
+or:
+
+```text
+session: carry-over from Desktop (phone active)
+session: carry-over from Desktop (paused; Desktop active)
+session: carry-over from Desktop (waiting Desktop pull)
+```
 
 ## Why Not Just A WeChat Bot?
 
@@ -497,6 +513,16 @@ codex-wechat daemon status
 
 The CLI is designed to avoid a single-platform assumption, but Windows has not been fully verified. On non-macOS environments, start with foreground listener / manual flow before wiring your own system service.
 
+## Known Limitations
+
+- macOS LaunchAgent is the only fully validated daemon path today.
+- WeChat iLink setup is currently tested against the iOS WeChat QR flow.
+- This is a personal local bridge, not a team bot/control plane.
+- `read` / `write` modes are not read sandboxes: they constrain writes, not all reads.
+- `write` mode can still read/search locally readable files and use the network, but it writes only inside the active project cwd.
+- If a Desktop thread is near the context limit, native carry-over asks you to run `/compact` in Desktop/CLI first. It does not silently summary-fallback.
+- iLink is an external protocol surface; if WeChat behavior changes, the bridge may need an update.
+
 ## How It Works
 
 ```text
@@ -579,6 +605,17 @@ Stop or remove it:
 codex-wechat daemon stop
 codex-wechat daemon uninstall
 ```
+
+Remove the local install and state completely:
+
+```bash
+codex-wechat daemon uninstall
+rm -f ~/.local/bin/codex-wechat
+rm -rf ~/.codex/skills/codex-wechat
+rm -rf ~/.codex-wechat-handoff
+```
+
+The last line deletes WeChat credentials, session state, logs, and the default `inbox` workspace.
 
 The legacy scripts remain thin wrappers:
 

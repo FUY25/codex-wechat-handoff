@@ -5,8 +5,8 @@ You are helping a user install Codex WeChat Handoff.
 Core product experience:
 
 1. Carry the current Codex Desktop session to WeChat.
-2. Continue the same thread from the phone.
-3. Pull the mobile continuation back into Codex Desktop.
+2. Continue from the phone in a forked mobile continuation, not by externally writing the live Desktop thread.
+3. Pull the mobile raw transcript back into Codex Desktop.
 4. Then teach project, mode, model, status, and rich artifact commands.
 
 Never ask the user to paste tokens. Never print `account.json`, bot tokens, sender ids, or context tokens.
@@ -40,7 +40,7 @@ Then ask the user to send `/onboarding`, `/projects`, `/project <name>`, and `/s
 First WeChat onboarding message should start with carry-over:
 
 ```text
-To continue this Desktop Codex session on your phone, tell Codex: carry this to WeChat. When you return, tell Codex: pull WeChat back. CLI fallback: `codex-wechat carry` and `codex-wechat pull`.
+To continue this Desktop Codex context on your phone, tell Codex: carry this to WeChat. The bridge forks a mobile continuation. When you return, tell Codex: pull WeChat back. CLI fallback: `codex-wechat carry` and `codex-wechat pull`.
 ```
 
 ## Safety Rules
@@ -51,7 +51,7 @@ To continue this Desktop Codex session on your phone, tell Codex: carry this to 
 - Keep sender access explicit. Do not configure a public install to respond to every WeChat sender.
 - Do not start a second daemon if `codex-wechat daemon status` shows one already running for the same state directory.
 - Use `codex-wechat doctor` after setup and after daemon install.
-- Explain project/session binding every time it is relevant: `/project <name>` switches to that project's own mobile session and Codex thread; it does not mutate one thread's cwd. Mode is restored from that project's existing session or default. Only carry-over temporarily attaches the current Desktop thread to WeChat.
+- Explain project/session binding every time it is relevant: `/project <name>` switches to that project's own mobile session and Codex thread; it does not mutate one thread's cwd. Mode is restored from that project's existing session or default. Carry-over forks the current Desktop thread into a mobile continuation and pull-back returns raw transcript context.
 - Match the user's interaction language when explaining commands. Use Chinese for Chinese onboarding and English for English onboarding.
 
 ## Troubleshooting Flow

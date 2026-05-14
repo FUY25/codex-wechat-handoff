@@ -112,7 +112,7 @@ When the user asks for status:
 codex-wechat carry-status --project current
 ```
 
-Status replies can include Codex context pressure from local rollout token usage. Treat `ok` and `unknown` as non-blocking, `high` as a warning, and `critical`/`saturated` as a reason to run `/compact` in the native Desktop/CLI thread before another carry/fork.
+Status replies explicitly say whether the phone is in `mobile native` or `carry-over from Desktop`. They can also include Codex context pressure from local rollout token usage. Treat `ok` and `unknown` as non-blocking, `high` as a warning, and `critical`/`saturated` as a reason to run `/compact` in the native Desktop/CLI thread before another carry/fork.
 
 When the user asks to find or attach sessions:
 

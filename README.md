@@ -366,7 +366,7 @@ finish-run 开关只能在 Desktop/CLI 控制。微信里的 `/notify status` �
 /model                 查看当前 model
 /model <name>          设置当前 sender + project 的 model override
 /model default         清除 model override
-/status                查看 project、mode、model、thread、lease、cwd
+/status                查看当前 session 类型、project、mode、model、thread、lease、cwd
 /health                查看 daemon 和最近 bridge health
 /current               查看当前 route 和 parked thread
 /sessions              查看 sender 的 project sessions
@@ -396,6 +396,20 @@ Permission modes：
 如果 Desktop thread 已经接近或命中模型 context window，bridge 会在 carry/fork 前读取本机 Codex rollout 里的 token usage。状态会显示在 `/status`、`carry-status` 和 carry 通知里，例如 `context: high (90%, 90k/100k)`。如果已经是 `critical` 或 `saturated`，bridge 会阻止 native fork，并提示你先在当前 Desktop/CLI thread 运行 `/compact`，然后再重新 carry。
 
 bridge 不会静默 fallback 到 summary handoff，避免你以为手机拿到的是完整 native thread。手机期间和 pull-back 仍然用 raw transcript delta 交接上下文。
+
+`/status` 会直接说明手机当前是在普通手机会话还是 Desktop carry-over：
+
+```text
+session: mobile native
+```
+
+或：
+
+```text
+session: carry-over from Desktop (phone active)
+session: carry-over from Desktop (paused; Desktop active)
+session: carry-over from Desktop (waiting Desktop pull)
+```
 
 ## 为什么不是普通微信 bot
 
@@ -499,6 +513,16 @@ codex-wechat daemon status
 
 CLI 设计上不绑定单一平台，但 Windows 还没有完整验证。非 macOS 环境可以先用 foreground listener / manual flow 验证，再决定是否自己接入系统服务。
 
+## Known Limitations
+
+- macOS LaunchAgent 是目前完整验证过的 daemon 路径。
+- WeChat iLink setup 当前按 iOS 微信扫码流程测试。
+- 这是个人本地 bridge，不是团队级 bot/control plane。
+- `read` / `write` mode 不是读取沙箱：它们限制写入，不限制所有读取。
+- `write` mode 仍可 read/search 本机可读文件和联网，但只能写 active project cwd。
+- Desktop thread 已接近 context limit 时，native carry-over 会要求先在 Desktop/CLI 里 `/compact`，不会自动 summary fallback。
+- iLink 是外部协议接口，后续如果微信侧行为变化，bridge 可能需要适配。
+
 ## 工作原理
 
 ```text
@@ -581,6 +605,17 @@ codex-wechat daemon logs
 codex-wechat daemon stop
 codex-wechat daemon uninstall
 ```
+
+彻底删除本地安装和状态：
+
+```bash
+codex-wechat daemon uninstall
+rm -f ~/.local/bin/codex-wechat
+rm -rf ~/.codex/skills/codex-wechat
+rm -rf ~/.codex-wechat-handoff
+```
+
+最后一行会删除 WeChat credentials、session state、logs 和默认 `inbox` workspace。
 
 legacy scripts 仍然是 thin wrappers：
 

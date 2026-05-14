@@ -259,10 +259,43 @@ describe("bridge state commands", () => {
     const result = applyBridgeCommand(state, projects, "sender-a", { type: "status" });
 
     expect(result.reply).toContain("project: vibelight");
+    expect(result.reply).toContain("session: mobile native");
     expect(result.reply).toContain("mode: read");
     expect(result.reply).toContain("model: gpt-5.4-mini");
     expect(result.reply).toContain("thread: none");
     expect(result.reply).toContain("/workspace/vibelight");
+  });
+
+  test("status makes carry-over state explicit", () => {
+    const state = createBridgeState();
+    state.senders["sender-a"] = {
+      activeProject: "vibelight",
+      sessions: {
+        vibelight: {
+          threadId: "mobile-thread",
+          cwd: "/workspace/vibelight",
+          mode: "read",
+        },
+      },
+      routes: {
+        vibelight: {
+          attachedThreadId: "desktop-thread",
+          mobileThreadId: "mobile-thread",
+          leaseState: "pending_desktop_pull",
+          activeSurface: "desktop",
+        },
+      },
+    };
+
+    const status = applyBridgeCommand(state, projects, "sender-a", { type: "status" });
+    expect(status.reply).toContain("session: carry-over from Desktop (waiting Desktop pull)");
+    expect(status.reply).toContain("thread: desktop-thread");
+    expect(status.reply).toContain("lease: pending_desktop_pull");
+    expect(status.reply).toContain("next: run pull WeChat back on Desktop");
+
+    const current = applyBridgeCommand(state, projects, "sender-a", { type: "current" });
+    expect(current.reply).toContain("session: carry-over from Desktop (waiting Desktop pull)");
+    expect(current.reply).toContain("surface: desktop");
   });
 
   test("status includes Codex context pressure when available", () => {
