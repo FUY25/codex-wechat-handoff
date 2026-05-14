@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "bun:test";
@@ -9,10 +9,13 @@ import {
   appendBridgeEvent,
   buildInboundUserMessageText,
   buildBridgeHealthReport,
+  buildBlockedOrdinaryWechatReply,
   buildCarryBackDelta,
   buildFileMessageItem,
   buildIntroMessage,
   buildLaunchAgentPlist,
+  buildNativeHandoffContextBlockedMessage,
+  describeLaunchAgentDaemonStatus,
   buildOnboardingMessage,
   buildFinishRunNotification,
   buildRawTranscriptFromCodexSession,
@@ -34,6 +37,7 @@ import {
   isFinishNotificationEnabled,
   isIlinkSessionTimeout,
   findCodexSessionCursorByThread,
+  formatCodexContextPressureLine,
   loadProjectRegistry,
   loadContextTokenCache,
   parseReplyMediaDirectives,
@@ -41,6 +45,7 @@ import {
   pauseWechatRoutesForDesktopActivity,
   pullCurrentToDesktop,
   readBridgeEvents,
+  readCodexContextPressure,
   readCurrentCodexThreadId,
   recoverFinalReplyFromCodexJsonl,
   recoverFinalReplyFromCodexSessionLogs,
@@ -58,6 +63,7 @@ import {
   setFinishNotificationEnabled,
   continueFinishRunOfferToWeChat,
   consumePendingDesktopTranscript,
+  shouldBlockNativeHandoffForContext,
   tryClaimInboundMessage,
 } from "./codex-wechat-ilink";
 
@@ -259,6 +265,39 @@ describe("bridge state commands", () => {
     expect(result.reply).toContain("/workspace/vibelight");
   });
 
+  test("status includes Codex context pressure when available", () => {
+    const state = createBridgeState();
+    state.senders["sender-a"] = {
+      sessions: {
+        vibelight: {
+          threadId: "thread-vibelight",
+          cwd: "/workspace/vibelight",
+          mode: "read",
+        },
+      },
+    };
+
+    const result = applyBridgeCommand(
+      state,
+      projects,
+      "sender-a",
+      { type: "status" },
+      {
+        contextPressure: {
+          threadId: "thread-vibelight",
+          status: "high",
+          reason: "context_usage",
+          usedTokens: 90_000,
+          contextWindow: 100_000,
+          percent: 90,
+        },
+      },
+    );
+
+    expect(result.reply).toContain("context: high (90%, 90k/100k)");
+    expect(result.reply).toContain("thread: thread-vibelight");
+  });
+
   test("new clears only the current project thread", () => {
     const state = createBridgeState();
     state.senders["sender-a"] = {
@@ -359,6 +398,83 @@ describe("app-server request helpers", () => {
     expect(input).toContain("image: /tmp/wechat-media/image-1.png");
     expect(input).toContain("voice: /tmp/wechat-media/voice-1.silk");
     expect(input).toContain("transcript: 这是语音转文字");
+  });
+});
+
+describe("Codex context pressure", () => {
+  test("detects saturated context from Codex rollout token_count and blocks native handoff", () =>
+    withTempDir((dir) => {
+      const file = path.join(dir, "desktop.jsonl");
+      writeFileSync(
+        file,
+        [
+          JSON.stringify({ type: "session_meta", payload: { id: "desktop-thread", cwd: "/repo" } }),
+          JSON.stringify({
+            type: "response_item",
+            payload: {
+              type: "token_count",
+              info: {
+                model_context_window: 258_400,
+                total_token_usage: { total_tokens: 258_400 },
+                last_token_usage: { total_tokens: 0 },
+              },
+            },
+          }),
+          JSON.stringify({
+            type: "response_item",
+            payload: {
+              type: "task_complete",
+              last_agent_message: null,
+            },
+          }),
+        ].join("\n") + "\n",
+      );
+
+      const pressure = readCodexContextPressure("desktop-thread", [dir]);
+
+      expect(pressure.status).toBe("saturated");
+      expect(pressure.usedTokens).toBe(258_400);
+      expect(pressure.contextWindow).toBe(258_400);
+      expect(shouldBlockNativeHandoffForContext(pressure)).toBe(true);
+      expect(formatCodexContextPressureLine(pressure)).toContain("context: saturated (100%, 258k/258k)");
+      expect(buildNativeHandoffContextBlockedMessage(pressure)).toContain("/compact");
+      expect(buildNativeHandoffContextBlockedMessage(pressure)).toContain("carry");
+    }));
+
+  test("reports unknown context when no token_count is present", () =>
+    withTempDir((dir) => {
+      writeFileSync(
+        path.join(dir, "desktop.jsonl"),
+        JSON.stringify({ type: "session_meta", payload: { id: "desktop-thread", cwd: "/repo" } }) + "\n",
+      );
+
+      const pressure = readCodexContextPressure("desktop-thread", [dir]);
+
+      expect(pressure.status).toBe("unknown");
+      expect(pressure.reason).toBe("no_token_usage");
+      expect(shouldBlockNativeHandoffForContext(pressure)).toBe(false);
+      expect(formatCodexContextPressureLine(pressure)).toContain("context: unknown");
+    }));
+
+  test("carry notification includes context pressure", () => {
+    const state = createBridgeState();
+    const result = carryCurrentToWeChat(state, projects, {
+      senderId: "sender-a",
+      projectName: "vibelight",
+      threadId: "desktop-thread",
+      mobileThreadId: "mobile-thread",
+      contextPressure: {
+        threadId: "desktop-thread",
+        status: "ok",
+        reason: "context_usage",
+        usedTokens: 22_000,
+        contextWindow: 200_000,
+        percent: 11,
+      },
+    });
+
+    expect(result.notification).toContain("context: ok (11%, 22k/200k)");
+    expect(result.notification).toContain("project: vibelight | mode: read | model: gpt-5.4-mini");
   });
 });
 
@@ -597,6 +713,10 @@ describe("stage 0 reliability foundation", () => {
         activeTurn: { turnId: "turn-1", origin: "wechat", startedAt: "2026-05-12T12:00:00.000Z" },
       }),
     ).toEqual({ action: "queue", reason: "active_turn" });
+    expect(buildBlockedOrdinaryWechatReply("desktop_active")).toContain("/detach");
+    expect(buildBlockedOrdinaryWechatReply("desktop_active", { needsReconcile: true })).toContain("pull WeChat back");
+    expect(buildBlockedOrdinaryWechatReply("desktop_active", { needsReconcile: true })).toContain("/detach");
+    expect(buildBlockedOrdinaryWechatReply("pending_desktop_pull")).toContain("/detach");
   });
 
   test("queues and drains deferred route messages in order", () => {
@@ -756,6 +876,79 @@ describe("stage 0 reliability foundation", () => {
       expect(transcript).not.toContain("duplicate event should not appear");
       expect(transcript).not.toContain("baseline before carry");
     }));
+
+  test("pull transcript strips bridge-injected desktop context from resumed WeChat turns", () =>
+    withTempDir((dir) => {
+      const sessionFile = path.join(dir, "mobile.jsonl");
+      const baseline = [
+        JSON.stringify({ type: "session_meta", payload: { id: "mobile-thread", cwd: "/workspace/vibelight" } }),
+      ].join("\n") + "\n";
+      const cursor = {
+        threadId: "mobile-thread",
+        file: sessionFile,
+        size: Buffer.byteLength(baseline),
+        mtimeMs: 1,
+      };
+      writeFileSync(
+        sessionFile,
+        baseline +
+          [
+            JSON.stringify({
+              timestamp: "2026-05-12T12:01:00.000Z",
+              type: "response_item",
+              payload: {
+                type: "message",
+                role: "user",
+                content: [
+                  {
+                    type: "input_text",
+                    text: [
+                      "Desktop handoff context since phone paused:",
+                      "Desktop raw handoff",
+                      "desktop-only implementation detail",
+                      "",
+                      "New WeChat message:",
+                      "你好啊 你是哪个thread",
+                    ].join("\n"),
+                  },
+                ],
+              },
+            }),
+            JSON.stringify({
+              timestamp: "2026-05-12T12:01:20.000Z",
+              type: "response_item",
+              payload: {
+                type: "message",
+                role: "assistant",
+                content: [{ type: "output_text", text: "我是 mobile thread" }],
+              },
+            }),
+          ].join("\n") +
+          "\n",
+        "utf-8",
+      );
+
+      const transcript = buildRawTranscriptFromCodexSession({
+        threadId: "mobile-thread",
+        cursor,
+        roots: [dir],
+        title: "WeChat raw handoff",
+        direction: "mobile_to_desktop",
+        projectName: "vibelight",
+        cwd: "/workspace/vibelight",
+        mode: "write",
+        model: "gpt-5.4-mini",
+        desktopThreadId: "desktop-thread",
+        mobileThreadId: "mobile-thread",
+      });
+
+      expect(transcript).toContain("WeChat user");
+      expect(transcript).toContain("你好啊 你是哪个thread");
+      expect(transcript).toContain("我是 mobile thread");
+      expect(transcript).not.toContain("Desktop handoff context since phone paused");
+      expect(transcript).not.toContain("desktop-only implementation detail");
+      expect(transcript).not.toContain("New WeChat message:");
+    }));
 });
 
 describe("stage 1-6 carry-over plan", () => {
@@ -793,6 +986,35 @@ describe("stage 1-6 carry-over plan", () => {
       const sessions = discoverCodexSessionsByCwd("/repo", [dir]);
       expect(sessions.map((session) => session.threadId)).toEqual(["thread-new", "thread-old"]);
       expect(sessions[0].summary).toContain("new task");
+    }));
+
+  test("uses the first session_meta as the owner for forked Codex session logs", () =>
+    withTempDir((dir) => {
+      const desktopFile = path.join(dir, "desktop.jsonl");
+      const mobileFile = path.join(dir, "mobile.jsonl");
+      writeFileSync(
+        desktopFile,
+        [
+          JSON.stringify({ type: "session_meta", payload: { id: "desktop-thread", cwd: "/desktop" } }),
+          JSON.stringify({ payload: { type: "message", role: "user", content: [{ type: "input_text", text: "desktop task" }] } }),
+        ].join("\n") + "\n",
+      );
+      writeFileSync(
+        mobileFile,
+        [
+          JSON.stringify({ type: "session_meta", payload: { id: "mobile-thread", forked_from_id: "desktop-thread", cwd: "/mobile" } }),
+          JSON.stringify({ type: "session_meta", payload: { id: "desktop-thread", cwd: "/desktop" } }),
+          JSON.stringify({ payload: { type: "message", role: "user", content: [{ type: "input_text", text: "mobile task" }] } }),
+        ].join("\n") + "\n",
+      );
+
+      const desktopCursor = findCodexSessionCursorByThread("desktop-thread", [dir]);
+      const mobileCursor = findCodexSessionCursorByThread("mobile-thread", [dir]);
+      const mobileSessions = discoverCodexSessionsByCwd("/mobile", [dir]);
+
+      expect(desktopCursor?.file).toBe(desktopFile);
+      expect(mobileCursor?.file).toBe(mobileFile);
+      expect(mobileSessions.map((session) => session.threadId)).toEqual(["mobile-thread"]);
     }));
 
   test("resolves the target sender from explicit id, last seen sender, or cached context token", () =>
@@ -842,21 +1064,15 @@ describe("stage 1-6 carry-over plan", () => {
     });
 
     expect(result.notification).toContain("continue from here");
-    expect(result.notification).toContain("desktop-thread");
-    expect(result.notification).toContain("mobile-thread");
-    expect(result.notification).toContain("forked mobile session");
-    expect(result.notification).toContain("project: vibelight");
-    expect(result.notification).toContain("cwd: /workspace/vibelight");
+    expect(result.notification).toContain("手机已接管这个 Codex thread");
+    expect(result.notification).toContain("project: vibelight | mode: write | model: gpt-5.4-mini");
     expect(result.notification).toContain("mode: write");
-    expect(result.notification).toContain("permission: write");
-    expect(result.notification).toContain("writes only inside the project cwd");
     expect(result.notification).toContain("model: gpt-5.4-mini");
-    expect(result.notification).toContain("现在请在微信继续");
-    expect(result.notification).toContain("电脑端先不要继续发消息");
-    expect(result.notification).toContain("微信 remote mode 会自动暂停");
+    expect(result.notification).toContain("直接回复继续");
     expect(result.notification).toContain("pull WeChat back");
-    expect(result.notification).toContain("回电脑后第一句话");
-    expect(result.notification).toContain("Desktop context 不含手机期间内容");
+    expect(result.notification).toContain("/resume");
+    expect(result.notification).toContain("/detach");
+    expect(result.notification.length).toBeLessThan(260);
     expect(state.senders["sender-a"].routes?.vibelight).toMatchObject({
       attachedThreadId: "desktop-thread",
       mobileThreadId: "mobile-thread",
@@ -1155,6 +1371,65 @@ describe("stage 1-6 carry-over plan", () => {
       expect(state.senders["sender-a"].routes?.vibelight.lastMobilePullCursor?.threadId).toBe("mobile-thread");
     }));
 
+  test("pull-current CLI dry-run does not persist lease or event mutations", () =>
+    withTempDir((dir) => {
+      const stateDir = path.join(dir, "state");
+      mkdirSync(stateDir, { recursive: true });
+      const projectsFile = path.join(stateDir, "projects.json");
+      writeFileSync(
+        projectsFile,
+        JSON.stringify({
+          defaultProject: "vibelight",
+          projects: {
+            vibelight: {
+              cwd: "/workspace/vibelight",
+              defaultMode: "read",
+            },
+          },
+        }),
+        "utf-8",
+      );
+
+      const state = createBridgeState();
+      carryCurrentToWeChat(state, projects, {
+        senderId: "sender-a",
+        projectName: "vibelight",
+        threadId: "desktop-thread",
+        mobileThreadId: "mobile-thread",
+        now: "2026-05-12T12:00:00.000Z",
+      });
+      const stateFile = path.join(stateDir, "sessions.json");
+      writeFileSync(stateFile, JSON.stringify(state, null, 2), "utf-8");
+      const beforeState = readFileSync(stateFile, "utf-8");
+      const eventsFile = path.join(stateDir, "events.jsonl");
+
+      const result = Bun.spawnSync({
+        cmd: [
+          process.execPath,
+          path.join(import.meta.dir, "codex-wechat-ilink.ts"),
+          "pull-current",
+          "--state-dir",
+          stateDir,
+          "--projects",
+          projectsFile,
+          "--project",
+          "vibelight",
+          "--thread-id",
+          "desktop-thread",
+          "--dry-run",
+        ],
+        cwd: import.meta.dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.toString()).toContain("dry-run: would pull current route");
+      expect(result.stdout.toString()).toContain("WeChat raw handoff");
+      expect(readFileSync(stateFile, "utf-8")).toBe(beforeState);
+      expect(existsSync(eventsFile)).toBe(false);
+    }));
+
   test("pull-current refuses to pull while a WeChat turn is still active", () => {
     const state = createBridgeState();
     carryCurrentToWeChat(state, projects, {
@@ -1282,6 +1557,26 @@ describe("stage 1-6 carry-over plan", () => {
       expect(route.pendingDesktopTranscript).toBeNull();
     }));
 
+  test("pending Desktop raw transcript is bounded when injected into a mobile turn", () => {
+    const route: any = {
+      pendingDesktopTranscript: [
+        "Desktop raw handoff",
+        "old desktop context",
+        "x".repeat(80_000),
+        "latest desktop decision",
+      ].join("\n"),
+    };
+
+    const input = consumePendingDesktopTranscript(route, "手机继续这个任务");
+
+    expect(input.length).toBeLessThan(40_000);
+    expect(input).toContain("raw desktop transcript truncated");
+    expect(input).toContain("latest desktop decision");
+    expect(input).toContain("New WeChat message:");
+    expect(input).toContain("手机继续这个任务");
+    expect(route.pendingDesktopTranscript).toBeNull();
+  });
+
   test("finish-run offer warns when mobile transcript is pending", () => {
     const state = createBridgeState();
     setFinishNotificationEnabled(state, "sender-a", true, "desktop-thread");
@@ -1310,10 +1605,11 @@ describe("stage 1-6 carry-over plan", () => {
     expect(result.notification).toContain("完成：测试完成 release 检查");
     expect(result.notification).toContain("需要你：决定是否发版");
     expect(result.notification).toContain("/continue");
-    expect(result.notification).toContain("不回复就不会接管手机");
-    expect(result.notification).toContain("先在电脑运行 pull WeChat back");
+    expect(result.notification).toContain("不回复保持原状态");
+    expect(result.notification).toContain("有未 pull 手机上下文");
+    expect(result.notification.length).toBeLessThan(260);
     expect(state.senders["sender-a"].threadFinishNotifications?.["desktop-thread"]?.pendingOffer?.threadId).toBe("desktop-thread");
-    expect(buildFinishRunNotification(result.offer)).toContain("Desktop context 不含手机期间内容");
+    expect(buildFinishRunNotification(result.offer)).toContain("电脑先运行 pull WeChat back");
   });
 
   test("continue from finish notification forks into a mobile route and clears the offer", () => {
@@ -1853,6 +2149,33 @@ describe("cli and skill packaging", () => {
     expect(plist).toContain("/home/alice/.codex-wechat-handoff");
     expect(plist).toContain("/opt/homebrew/bin/bun");
     expect(plist).not.toContain("local-user");
+  });
+
+  test("doctor daemon status calls out a LaunchAgent for a different state dir", () => {
+    const plist = buildLaunchAgentPlist({
+      label: "com.codex-wechat-handoff.daemon",
+      bunBin: "/opt/homebrew/bin/bun",
+      scriptPath: "/repo/codex-wechat-ilink.ts",
+      stateDir: "/tmp/global-codex-wechat",
+      projectsFile: "/tmp/global-codex-wechat/projects.json",
+      codexBin: "/opt/homebrew/bin/codex",
+      workingDirectory: "/repo",
+      logDir: "/tmp/global-codex-wechat/logs",
+      homeDir: "/home/alice",
+    });
+
+    const status = describeLaunchAgentDaemonStatus({
+      requestedStateDir: "/tmp/scoped-codex-wechat",
+      launchctlExitCode: 0,
+      launchctlStdout: "state = running\npid = 12345\n",
+      plistText: plist,
+      platform: "darwin",
+    });
+
+    expect(status).toContain("running");
+    expect(status).toContain("pid 12345");
+    expect(status).toContain("different state-dir: /tmp/global-codex-wechat");
+    expect(status).toContain("requested: /tmp/scoped-codex-wechat");
   });
 
   test("onboarding starts with carry-over before generic commands", () => {

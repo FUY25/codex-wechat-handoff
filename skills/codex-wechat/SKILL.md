@@ -84,10 +84,11 @@ When the user says "carry this to WeChat", "continue on phone", or similar:
 
 1. Run `codex-wechat carry-current --project current --to last`.
 2. Report whether the WeChat notification was sent.
-3. Say that carry-over is a handoff lease: the bridge forks the Desktop thread into a forked mobile session, WeChat writes only the mobile thread, and if Desktop/CLI continues before pull-back, WeChat remote mode auto-pauses until `/resume`, `/detach`, or a fresh carry.
-4. Explicitly tell the user: when they return to Desktop, the first message should be `pull WeChat back`, then they can continue the task. If they skip pull and continue on Desktop, that Desktop turn will not include the phone-side raw transcript.
-5. If the output mentions `CODEX_THREAD_ID`, explain that carry must run from inside a Codex Desktop/CLI thread, or use `--thread-id` only for manual testing.
-6. If notification is `not_sent (missing_context_token)`, tell the user to send any message from WeChat first so the bridge can cache a reply context.
+3. If output says `context: high`, mention that the handoff worked but the user should compact soon from Desktop/CLI. If output says the thread is `critical` or `saturated`, tell the user to run `/compact` in the current Desktop/CLI thread and retry carry; do not offer a summary fallback as if it were the same native thread.
+4. Say that carry-over is a handoff lease: the bridge forks the Desktop thread into a forked mobile session, WeChat writes only the mobile thread, and if Desktop/CLI continues before pull-back, WeChat remote mode auto-pauses until `/resume`, `/detach`, or a fresh carry.
+5. Explicitly tell the user: when they return to Desktop, the first message should be `pull WeChat back`, then they can continue the task. If they skip pull and continue on Desktop, that Desktop turn will not include the phone-side raw transcript.
+6. If the output mentions `CODEX_THREAD_ID`, explain that carry must run from inside a Codex Desktop/CLI thread, or use `--thread-id` only for manual testing.
+7. If notification is `not_sent (missing_context_token)`, tell the user to send any message from WeChat first so the bridge can cache a reply context.
 
 When the user says "/wechat pull", "pull WeChat back", "continue from Desktop", or similar:
 
@@ -110,6 +111,8 @@ When the user asks for status:
 ```bash
 codex-wechat carry-status --project current
 ```
+
+Status replies can include Codex context pressure from local rollout token usage. Treat `ok` and `unknown` as non-blocking, `high` as a warning, and `critical`/`saturated` as a reason to run `/compact` in the native Desktop/CLI thread before another carry/fork.
 
 When the user asks to find or attach sessions:
 

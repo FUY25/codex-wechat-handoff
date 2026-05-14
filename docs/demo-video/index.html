@@ -1,0 +1,915 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1080, height=1920" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 1080px;
+        height: 1920px;
+        overflow: hidden;
+        background: #07110d;
+        color: #f4fff8;
+        font-family:
+          Inter, "SF Pro Display", "PingFang SC", "Helvetica Neue", Arial,
+          sans-serif;
+      }
+
+      #root {
+        position: relative;
+        width: 1080px;
+        height: 1920px;
+        overflow: hidden;
+        background:
+          radial-gradient(circle at 18% 10%, rgba(7, 193, 96, 0.24), transparent 32%),
+          radial-gradient(circle at 88% 78%, rgba(221, 247, 234, 0.13), transparent 34%),
+          #07110d;
+      }
+
+      .clip {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+      }
+
+      .ambient {
+        z-index: 0;
+      }
+
+      .grain {
+        position: absolute;
+        inset: 0;
+        opacity: 0.12;
+        background-image:
+          linear-gradient(rgba(244, 255, 248, 0.05) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(244, 255, 248, 0.04) 1px, transparent 1px);
+        background-size: 48px 48px;
+        mask-image: radial-gradient(circle at center, black 20%, transparent 82%);
+      }
+
+      .glow {
+        position: absolute;
+        border-radius: 999px;
+        filter: blur(4px);
+        opacity: 0.58;
+      }
+
+      .glow-a {
+        width: 360px;
+        height: 360px;
+        left: -120px;
+        top: 90px;
+        background: rgba(7, 193, 96, 0.18);
+      }
+
+      .glow-b {
+        width: 460px;
+        height: 460px;
+        right: -180px;
+        bottom: 180px;
+        background: rgba(221, 247, 234, 0.1);
+      }
+
+      .orb {
+        position: absolute;
+        width: 14px;
+        height: 14px;
+        border-radius: 999px;
+        background: #07c160;
+        box-shadow: 0 0 24px rgba(7, 193, 96, 0.64);
+      }
+
+      .orb.one {
+        left: 130px;
+        top: 1450px;
+      }
+
+      .orb.two {
+        right: 158px;
+        top: 320px;
+        width: 10px;
+        height: 10px;
+        background: #ddf7ea;
+        box-shadow: 0 0 20px rgba(221, 247, 234, 0.45);
+      }
+
+      .scene {
+        z-index: 2;
+        width: 100%;
+        height: 100%;
+        padding: 104px 76px 92px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 34px;
+      }
+
+      .logo-row {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 24px;
+        color: #f4fff8;
+      }
+
+      .logo-token {
+        min-width: 210px;
+        padding: 24px 30px;
+        border: 1px solid rgba(244, 255, 248, 0.16);
+        border-radius: 34px;
+        background: rgba(23, 35, 30, 0.86);
+        box-shadow: 0 24px 70px rgba(0, 0, 0, 0.32);
+        text-align: center;
+        font-size: 38px;
+        font-weight: 760;
+        letter-spacing: 0;
+      }
+
+      .logo-token.wechat {
+        color: #07110d;
+        background: #07c160;
+      }
+
+      .separator {
+        width: 3px;
+        height: 84px;
+        border-radius: 999px;
+        background: #4b6257;
+        box-shadow: 0 0 24px rgba(7, 193, 96, 0.32);
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        width: fit-content;
+        align-items: center;
+        gap: 12px;
+        padding: 13px 20px;
+        border-radius: 999px;
+        background: rgba(7, 193, 96, 0.14);
+        color: #9cf1bd;
+        border: 1px solid rgba(7, 193, 96, 0.28);
+        font-size: 28px;
+        font-weight: 720;
+        letter-spacing: 0;
+      }
+
+      .eyebrow-dot {
+        width: 13px;
+        height: 13px;
+        border-radius: 999px;
+        background: #07c160;
+        box-shadow: 0 0 18px rgba(7, 193, 96, 0.72);
+      }
+
+      .headline {
+        max-width: 920px;
+        font-size: 82px;
+        line-height: 1.08;
+        font-weight: 820;
+        letter-spacing: 0;
+      }
+
+      .headline.center {
+        margin: 0 auto;
+        text-align: center;
+      }
+
+      .headline span,
+      .closing-title span {
+        display: block;
+      }
+
+      .subline {
+        max-width: 860px;
+        color: #a8b8af;
+        font-size: 34px;
+        line-height: 1.38;
+        font-weight: 520;
+        letter-spacing: 0;
+      }
+
+      .subline.center {
+        margin: 0 auto;
+        text-align: center;
+      }
+
+      .interface-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 34px;
+        width: 100%;
+      }
+
+      .desktop {
+        width: 548px;
+        min-height: 650px;
+        padding: 30px;
+        border-radius: 46px;
+        background: rgba(16, 27, 23, 0.92);
+        border: 1px solid rgba(244, 255, 248, 0.13);
+        box-shadow: 0 34px 90px rgba(0, 0, 0, 0.38);
+      }
+
+      .window-bar {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        height: 42px;
+        color: #a8b8af;
+        font-size: 22px;
+        font-weight: 640;
+      }
+
+      .traffic {
+        display: flex;
+        gap: 8px;
+      }
+
+      .traffic span {
+        width: 13px;
+        height: 13px;
+        border-radius: 999px;
+        background: rgba(244, 255, 248, 0.28);
+      }
+
+      .desktop-title {
+        margin-top: 22px;
+        font-size: 34px;
+        line-height: 1.24;
+        font-weight: 780;
+      }
+
+      .status-stack {
+        margin-top: 28px;
+        display: flex;
+        flex-direction: column;
+        gap: 15px;
+      }
+
+      .status-pill {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 18px 20px;
+        border-radius: 24px;
+        background: rgba(244, 255, 248, 0.07);
+        color: #dcebe3;
+        font-size: 25px;
+        line-height: 1.22;
+        font-weight: 610;
+      }
+
+      .status-pill.active {
+        background: rgba(7, 193, 96, 0.16);
+        color: #f4fff8;
+        border: 1px solid rgba(7, 193, 96, 0.28);
+      }
+
+      .check {
+        width: 25px;
+        height: 25px;
+        flex: 0 0 auto;
+        display: grid;
+        place-items: center;
+        border-radius: 999px;
+        background: #07c160;
+        color: #07110d;
+        font-size: 17px;
+        font-weight: 900;
+      }
+
+      .phone {
+        width: 354px;
+        height: 720px;
+        padding: 18px;
+        border-radius: 64px;
+        background: #0d1713;
+        border: 2px solid rgba(244, 255, 248, 0.12);
+        box-shadow:
+          inset 0 0 0 7px rgba(244, 255, 248, 0.04),
+          0 34px 86px rgba(0, 0, 0, 0.42);
+      }
+
+      .phone-screen {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        border-radius: 48px;
+        background: #f3f3f3;
+        color: #111a16;
+      }
+
+      .phone-top {
+        height: 78px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+        background: rgba(246, 246, 246, 0.96);
+        font-size: 20px;
+        font-weight: 760;
+      }
+
+      .phone-notch {
+        position: absolute;
+        top: 12px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 92px;
+        height: 24px;
+        border-radius: 999px;
+        background: #0d1713;
+        z-index: 5;
+      }
+
+      .phone-body {
+        height: calc(100% - 78px);
+        padding: 24px 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+
+      .notification {
+        margin: 18px auto 0;
+        width: 284px;
+        padding: 18px 18px 16px;
+        border-radius: 28px;
+        background: rgba(255, 255, 255, 0.96);
+        box-shadow: 0 18px 44px rgba(0, 0, 0, 0.18);
+      }
+
+      .notification-app {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        color: #5d6d63;
+        font-size: 17px;
+        font-weight: 740;
+      }
+
+      .app-dot {
+        width: 22px;
+        height: 22px;
+        display: grid;
+        place-items: center;
+        border-radius: 7px;
+        background: #07c160;
+        color: white;
+        font-size: 14px;
+        font-weight: 900;
+      }
+
+      .notification-title {
+        margin-top: 12px;
+        font-size: 22px;
+        font-weight: 820;
+      }
+
+      .notification-text {
+        margin-top: 7px;
+        color: #657169;
+        font-size: 18px;
+        line-height: 1.3;
+        font-weight: 560;
+      }
+
+      .choice-row {
+        margin-top: 18px;
+        display: flex;
+        gap: 11px;
+      }
+
+      .choice {
+        padding: 11px 15px;
+        border-radius: 999px;
+        font-size: 16px;
+        font-weight: 780;
+        white-space: nowrap;
+      }
+
+      .choice.primary {
+        background: #07c160;
+        color: white;
+      }
+
+      .choice.secondary {
+        background: #e9eee9;
+        color: #4c5c52;
+      }
+
+      .caption-card {
+        width: 100%;
+        padding: 24px 28px;
+        border-radius: 34px;
+        border: 1px solid rgba(244, 255, 248, 0.14);
+        background: rgba(23, 35, 30, 0.82);
+        color: #c8d8ce;
+        font-size: 29px;
+        line-height: 1.32;
+        font-weight: 630;
+        box-shadow: 0 24px 68px rgba(0, 0, 0, 0.28);
+      }
+
+      .caption-card strong {
+        color: #f4fff8;
+      }
+
+      .thread-card {
+        margin-top: 24px;
+        padding: 24px;
+        border-radius: 34px;
+        background: rgba(244, 255, 248, 0.08);
+        border: 1px solid rgba(244, 255, 248, 0.13);
+      }
+
+      .thread-card-title {
+        color: #a8b8af;
+        font-size: 21px;
+        font-weight: 720;
+      }
+
+      .thread-card-main {
+        margin-top: 12px;
+        font-size: 31px;
+        line-height: 1.22;
+        font-weight: 790;
+      }
+
+      .chip-grid {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 24px;
+      }
+
+      .chip {
+        padding: 12px 15px;
+        border-radius: 999px;
+        background: rgba(221, 247, 234, 0.09);
+        color: #c7dccf;
+        font-size: 20px;
+        font-weight: 690;
+        border: 1px solid rgba(221, 247, 234, 0.1);
+      }
+
+      .command-pill {
+        margin-top: 24px;
+        width: fit-content;
+        max-width: 100%;
+        padding: 17px 22px;
+        border-radius: 999px;
+        background: #07c160;
+        color: #06130d;
+        font-size: 24px;
+        font-weight: 820;
+        box-shadow: 0 16px 38px rgba(7, 193, 96, 0.24);
+      }
+
+      .chat-empty {
+        height: 160px;
+        display: grid;
+        place-items: center;
+        color: #a8b0ab;
+        font-size: 18px;
+        font-weight: 660;
+      }
+
+      .bubble {
+        max-width: 254px;
+        width: fit-content;
+        padding: 15px 17px;
+        border-radius: 23px;
+        font-size: 18px;
+        line-height: 1.34;
+        font-weight: 620;
+      }
+
+      .bubble.system {
+        align-self: center;
+        max-width: 268px;
+        border-radius: 24px;
+        background: #e7f5ec;
+        color: #27643e;
+        text-align: center;
+        font-weight: 780;
+      }
+
+      .bubble.assistant {
+        align-self: flex-start;
+        background: #fff;
+        color: #132019;
+        border-bottom-left-radius: 8px;
+      }
+
+      .bubble.user {
+        align-self: flex-end;
+        background: #07c160;
+        color: white;
+        border-bottom-right-radius: 8px;
+      }
+
+      .thread-tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        width: fit-content;
+        padding: 9px 12px;
+        border-radius: 999px;
+        background: rgba(7, 193, 96, 0.12);
+        color: #07c160;
+        font-size: 17px;
+        font-weight: 820;
+      }
+
+      .handoff-line {
+        position: absolute;
+        left: 550px;
+        top: 940px;
+        width: 168px;
+        height: 6px;
+        border-radius: 999px;
+        background: rgba(75, 98, 87, 0.62);
+        z-index: 4;
+      }
+
+      .line-pulse {
+        position: absolute;
+        inset: 0 auto 0 0;
+        width: 46px;
+        border-radius: inherit;
+        background: #07c160;
+        box-shadow: 0 0 24px rgba(7, 193, 96, 0.7);
+      }
+
+      .pull-card {
+        margin-top: 24px;
+        padding: 21px 23px;
+        border-radius: 30px;
+        background: rgba(7, 193, 96, 0.14);
+        border: 1px solid rgba(7, 193, 96, 0.28);
+      }
+
+      .pull-label {
+        color: #9cf1bd;
+        font-size: 20px;
+        font-weight: 760;
+      }
+
+      .pull-main {
+        margin-top: 10px;
+        color: #f4fff8;
+        font-size: 25px;
+        line-height: 1.28;
+        font-weight: 750;
+      }
+
+      .closing-stack {
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        gap: 42px;
+      }
+
+      .closing-title {
+        max-width: 900px;
+        font-size: 90px;
+        line-height: 1.05;
+        font-weight: 860;
+      }
+
+      .closing-title .accent {
+        color: #07c160;
+      }
+
+      .closing-pills {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 16px;
+        max-width: 860px;
+      }
+
+      .closing-pill {
+        padding: 17px 22px;
+        border-radius: 999px;
+        background: rgba(244, 255, 248, 0.08);
+        border: 1px solid rgba(244, 255, 248, 0.12);
+        color: #cfe0d6;
+        font-size: 25px;
+        font-weight: 720;
+      }
+
+      .brand-name {
+        color: #a8b8af;
+        font-size: 31px;
+        font-weight: 710;
+      }
+
+      .transition {
+        z-index: 9;
+        pointer-events: none;
+      }
+
+      .wipe-bubble {
+        position: absolute;
+        width: 1340px;
+        height: 1340px;
+        left: -130px;
+        top: 290px;
+        border-radius: 999px;
+        background: #07c160;
+        opacity: 0.96;
+        box-shadow: 0 0 90px rgba(7, 193, 96, 0.34);
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="32"
+      data-width="1080"
+      data-height="1920"
+    >
+      <div
+        id="ambient"
+        class="clip ambient"
+        data-start="0"
+        data-duration="32"
+        data-track-index="0"
+      >
+        <div class="grain"></div>
+        <div class="glow glow-a"></div>
+        <div class="glow glow-b"></div>
+        <div class="orb one"></div>
+        <div class="orb two"></div>
+      </div>
+
+      <section
+        id="scene-intro"
+        class="clip scene"
+        data-start="0"
+        data-duration="4.2"
+        data-track-index="1"
+      >
+        <div class="logo-row intro-logo">
+          <div class="logo-token">Codex</div>
+          <div class="separator"></div>
+          <div class="logo-token wechat">微信</div>
+        </div>
+        <h1 class="headline center intro-headline">
+          <span>跑完提醒你，</span>
+          <span>换个界面继续。</span>
+        </h1>
+        <p class="subline center intro-subline">
+          Codex WeChat Handoff
+        </p>
+      </section>
+
+      <div
+        id="transition-1"
+        class="clip transition"
+        data-start="3.78"
+        data-duration="1.05"
+        data-track-index="8"
+      >
+        <div class="wipe-bubble"></div>
+      </div>
+
+      <section
+        id="scene-notify"
+        class="clip scene"
+        data-start="4.2"
+        data-duration="10.2"
+        data-track-index="2"
+      >
+        <div class="eyebrow notify-eyebrow">
+          <span class="eyebrow-dot"></span>
+          Case 1 · 完成提醒
+        </div>
+        <h2 class="headline notify-headline">Codex 跑完了，微信告诉你。</h2>
+        <div class="interface-row notify-row">
+          <div class="desktop notify-desktop">
+            <div class="window-bar">
+              <div class="traffic"><span></span><span></span><span></span></div>
+              Codex Desktop
+            </div>
+            <div class="desktop-title">处理前端 diff 和风险点</div>
+            <div class="status-stack">
+              <div class="status-pill">
+                <span class="check">✓</span>
+                已检查改动范围
+              </div>
+              <div class="status-pill">
+                <span class="check">✓</span>
+                测试通过
+              </div>
+              <div class="status-pill active">
+                <span class="check">✓</span>
+                下一步：决定是否继续
+              </div>
+            </div>
+          </div>
+          <div class="phone notify-phone">
+            <div class="phone-screen">
+              <div class="phone-notch"></div>
+              <div class="phone-top">微信</div>
+              <div class="phone-body">
+                <div class="notification">
+                  <div class="notification-app">
+                    <span class="app-dot">C</span>
+                    Codex
+                  </div>
+                  <div class="notification-title">这次 run 完成了</div>
+                  <div class="notification-text">
+                    已整理 diff 风险。下一步：决定要不要继续。
+                  </div>
+                  <div class="choice-row">
+                    <div class="choice primary">/continue</div>
+                    <div class="choice secondary">先不回</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="caption-card notify-caption">
+          <strong>回复 /continue</strong> 才从手机继续；不回复，当前微信会话不被打断。
+        </div>
+      </section>
+
+      <div
+        id="transition-2"
+        class="clip transition"
+        data-start="13.98"
+        data-duration="1.08"
+        data-track-index="9"
+      >
+        <div class="wipe-bubble"></div>
+      </div>
+
+      <section
+        id="scene-handoff"
+        class="clip scene"
+        data-start="14.4"
+        data-duration="12.4"
+        data-track-index="3"
+      >
+        <div class="eyebrow handoff-eyebrow">
+          <span class="eyebrow-dot"></span>
+          Case 2 · 同一个 thread
+        </div>
+        <h2 class="headline handoff-headline">
+          同一个 Codex thread，换成微信继续工作。
+        </h2>
+        <div class="interface-row handoff-row">
+          <div class="desktop handoff-desktop">
+            <div class="window-bar">
+              <div class="traffic"><span></span><span></span><span></span></div>
+              Codex Desktop
+            </div>
+            <div class="thread-card">
+              <div class="thread-card-title">当前 thread 已经聊到一半</div>
+              <div class="thread-card-main">项目背景、约束和下一步都在这里。</div>
+              <div class="chip-grid">
+                <div class="chip">项目背景</div>
+                <div class="chip">设计限制</div>
+                <div class="chip">相关文件</div>
+                <div class="chip">下一步</div>
+              </div>
+            </div>
+            <div class="command-pill">carry this to WeChat</div>
+            <div class="pull-card">
+              <div class="pull-label">回到电脑后</div>
+              <div class="pull-main">pull WeChat back，把手机上的进展带回 Desktop。</div>
+            </div>
+          </div>
+          <div class="handoff-line"><span class="line-pulse"></span></div>
+          <div class="phone handoff-phone">
+            <div class="phone-screen">
+              <div class="phone-notch"></div>
+              <div class="phone-top">Codex · 微信</div>
+              <div class="phone-body">
+                <div class="chat-empty">手机上打开的是同一段工作流</div>
+                <div class="bubble system">continue from here</div>
+                <div class="thread-tag">同一个 thread 已接上</div>
+                <div class="bubble user">继续刚才的方案，帮我整理风险点。</div>
+                <div class="bubble assistant">收到，沿用刚才上下文继续。</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="caption-card handoff-caption">
+          不是新开一个空白 bot。是 <strong>same thread，different interface</strong>。
+        </div>
+      </section>
+
+      <div
+        id="transition-3"
+        class="clip transition"
+        data-start="26.42"
+        data-duration="1.05"
+        data-track-index="10"
+      >
+        <div class="wipe-bubble"></div>
+      </div>
+
+      <section
+        id="scene-closing"
+        class="clip scene closing-stack"
+        data-start="26.8"
+        data-duration="5.2"
+        data-track-index="4"
+      >
+        <div class="logo-row closing-logo">
+          <div class="logo-token">Codex</div>
+          <div class="separator"></div>
+          <div class="logo-token wechat">微信</div>
+        </div>
+        <h2 class="closing-title">
+          <span class="accent">同一个 thread，</span>
+          <span>不同界面继续工作。</span>
+        </h2>
+        <div class="closing-pills">
+          <div class="closing-pill">跑完微信提醒</div>
+          <div class="closing-pill">手机继续工作</div>
+          <div class="closing-pill">回电脑 pull back</div>
+        </div>
+        <div class="brand-name">Codex WeChat Handoff</div>
+      </section>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      tl.from(".grain", { opacity: 0, duration: 0.8, ease: "sine.out" }, 0.1);
+      tl.to(".glow-a", { scale: 1.14, x: 26, y: 18, duration: 8, repeat: 3, yoyo: true, ease: "sine.inOut" }, 0);
+      tl.to(".glow-b", { scale: 1.12, x: -28, y: -24, duration: 9, repeat: 3, yoyo: true, ease: "sine.inOut" }, 0.2);
+      tl.to(".orb.one", { y: -44, x: 22, duration: 5.4, repeat: 5, yoyo: true, ease: "sine.inOut" }, 0.1);
+      tl.to(".orb.two", { y: 34, x: -18, duration: 4.8, repeat: 6, yoyo: true, ease: "sine.inOut" }, 0.4);
+
+      tl.from(".intro-logo .logo-token", { y: 36, scale: 0.86, opacity: 0, duration: 0.64, stagger: 0.12, ease: "back.out(1.8)" }, 0.24);
+      tl.from(".intro-logo .separator", { scaleY: 0, opacity: 0, duration: 0.52, ease: "power3.out" }, 0.46);
+      tl.from(".intro-headline", { y: 48, opacity: 0, duration: 0.7, ease: "expo.out" }, 0.88);
+      tl.from(".intro-subline", { y: 26, opacity: 0, duration: 0.52, ease: "power2.out" }, 1.18);
+
+      tl.from("#transition-1 .wipe-bubble", { scale: 0, x: 540, y: -120, duration: 0.46, ease: "power4.in" }, 3.78);
+      tl.to("#transition-1 .wipe-bubble", { scale: 0, x: -520, y: 140, duration: 0.48, ease: "power3.out" }, 4.32);
+
+      tl.from(".notify-eyebrow", { x: -34, scale: 0.94, opacity: 0, duration: 0.5, ease: "back.out(1.5)" }, 4.46);
+      tl.from(".notify-headline", { y: 46, opacity: 0, duration: 0.66, ease: "expo.out" }, 4.72);
+      tl.from(".notify-desktop", { x: -54, y: 22, rotation: -2, opacity: 0, duration: 0.72, ease: "power3.out" }, 5.12);
+      tl.from(".notify-phone", { x: 58, y: 32, rotation: 2, opacity: 0, duration: 0.72, ease: "back.out(1.35)" }, 5.28);
+      tl.from(".notify-desktop .status-pill", { y: 24, opacity: 0, scale: 0.96, duration: 0.42, stagger: 0.14, ease: "power2.out" }, 5.82);
+      tl.from(".notification", { y: -38, scale: 0.9, opacity: 0, duration: 0.58, ease: "back.out(1.65)" }, 6.52);
+      tl.from(".notification .choice", { y: 18, scale: 0.9, opacity: 0, duration: 0.36, stagger: 0.09, ease: "power3.out" }, 7.18);
+      tl.from(".notify-caption", { y: 34, opacity: 0, scale: 0.97, duration: 0.54, ease: "circ.out" }, 7.66);
+      tl.to(".choice.primary", { scale: 1.08, duration: 0.28, repeat: 3, yoyo: true, ease: "sine.inOut" }, 8.7);
+
+      tl.from("#transition-2 .wipe-bubble", { scale: 0, x: -540, y: 130, duration: 0.48, ease: "power4.in" }, 13.98);
+      tl.to("#transition-2 .wipe-bubble", { scale: 0, x: 520, y: -140, duration: 0.5, ease: "power3.out" }, 14.54);
+
+      tl.from(".handoff-eyebrow", { x: -34, scale: 0.94, opacity: 0, duration: 0.5, ease: "back.out(1.5)" }, 14.66);
+      tl.from(".handoff-headline", { y: 48, opacity: 0, duration: 0.68, ease: "expo.out" }, 14.92);
+      tl.from(".handoff-desktop", { x: -56, y: 24, rotation: -1.8, opacity: 0, duration: 0.72, ease: "power3.out" }, 15.34);
+      tl.from(".thread-card", { y: 30, scale: 0.96, opacity: 0, duration: 0.54, ease: "circ.out" }, 15.78);
+      tl.from(".chip", { y: 18, opacity: 0, scale: 0.88, duration: 0.34, stagger: 0.07, ease: "back.out(1.55)" }, 16.16);
+      tl.from(".command-pill", { y: 22, scale: 0.9, opacity: 0, duration: 0.42, ease: "back.out(1.8)" }, 16.7);
+      tl.from(".handoff-line", { scaleX: 0, transformOrigin: "left center", opacity: 0, duration: 0.54, ease: "power3.out" }, 17.12);
+      tl.to(".line-pulse", { x: 118, duration: 0.8, repeat: 5, yoyo: true, ease: "sine.inOut" }, 17.18);
+      tl.from(".handoff-phone", { x: 58, y: 28, rotation: 2, opacity: 0, duration: 0.7, ease: "back.out(1.35)" }, 17.32);
+      tl.from(".chat-empty", { y: 18, opacity: 0, duration: 0.44, ease: "power2.out" }, 17.82);
+      tl.from(".bubble.system", { y: 20, scale: 0.9, opacity: 0, duration: 0.42, ease: "back.out(1.7)" }, 18.38);
+      tl.from(".thread-tag", { y: 18, scale: 0.9, opacity: 0, duration: 0.38, ease: "power3.out" }, 18.86);
+      tl.from(".bubble.user", { x: 34, scale: 0.94, opacity: 0, duration: 0.44, ease: "back.out(1.45)" }, 19.36);
+      tl.from(".bubble.assistant", { x: -34, scale: 0.94, opacity: 0, duration: 0.44, ease: "power3.out" }, 19.92);
+      tl.from(".pull-card", { y: 24, opacity: 0, scale: 0.96, duration: 0.5, ease: "circ.out" }, 20.72);
+      tl.from(".handoff-caption", { y: 34, opacity: 0, scale: 0.97, duration: 0.54, ease: "power2.out" }, 21.42);
+
+      tl.from("#transition-3 .wipe-bubble", { scale: 0, x: 520, y: 130, duration: 0.48, ease: "power4.in" }, 26.42);
+      tl.to("#transition-3 .wipe-bubble", { scale: 0, x: -520, y: -130, duration: 0.5, ease: "power3.out" }, 26.98);
+
+      tl.from(".closing-logo .logo-token", { y: 34, scale: 0.86, opacity: 0, duration: 0.6, stagger: 0.1, ease: "back.out(1.8)" }, 27.1);
+      tl.from(".closing-logo .separator", { scaleY: 0, opacity: 0, duration: 0.5, ease: "power3.out" }, 27.28);
+      tl.from(".closing-title", { y: 50, opacity: 0, duration: 0.72, ease: "expo.out" }, 27.76);
+      tl.from(".closing-pill", { y: 24, scale: 0.92, opacity: 0, duration: 0.4, stagger: 0.11, ease: "back.out(1.5)" }, 28.52);
+      tl.from(".brand-name", { y: 18, opacity: 0, duration: 0.44, ease: "power2.out" }, 29.18);
+      tl.to("#scene-closing", { opacity: 0, duration: 0.5, ease: "sine.in" }, 31.4);
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>

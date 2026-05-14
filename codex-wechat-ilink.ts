@@ -33,6 +33,9 @@ const MESSAGE_CLAIM_TTL_MS = 24 * 60 * 60 * 1000;
 const BRIDGE_LOCK_STALE_MS = 120_000;
 const BRIDGE_LOCK_HEARTBEAT_MS = 30_000;
 const MAX_WECHAT_TEXT_CHARS = 3500;
+const MAX_PENDING_DESKTOP_TRANSCRIPT_CHARS = 24_000;
+const CODEX_CONTEXT_HIGH_PERCENT = 80;
+const CODEX_CONTEXT_BLOCK_PERCENT = 95;
 const MSG_TYPE_USER = 1;
 const MSG_TYPE_BOT = 2;
 const MSG_STATE_FINISH = 2;
@@ -191,6 +194,21 @@ export type CodexSessionCursor = {
   file: string;
   size: number;
   mtimeMs: number;
+};
+
+export type CodexContextPressureStatus = "unknown" | "ok" | "high" | "critical" | "saturated";
+
+export type CodexContextPressure = {
+  threadId: string;
+  status: CodexContextPressureStatus;
+  reason: "no_session_file" | "no_token_usage" | "context_usage" | "context_limit_empty_reply";
+  file?: string;
+  usedTokens?: number;
+  contextWindow?: number;
+  percent?: number;
+  lastUsageTokens?: number;
+  totalUsageTokens?: number;
+  emptyTaskComplete?: boolean;
 };
 
 export type SenderProjectRoute = RouteRuntimeState & {
@@ -701,6 +719,15 @@ function xmlEscape(value: string): string {
     .replaceAll("'", "&apos;");
 }
 
+function xmlUnescape(value: string): string {
+  return value
+    .replaceAll("&apos;", "'")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&gt;", ">")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&amp;", "&");
+}
+
 export function buildLaunchAgentPlist(params: {
   label: string;
   bunBin: string;
@@ -1063,6 +1090,7 @@ export function buildBridgeHealthReport(params: {
   project?: string;
   mode?: BridgeMode;
   model?: string;
+  contextPressure?: CodexContextPressure | null;
 }): string {
   const nowMs = Date.parse(params.now ?? new Date().toISOString());
   const startedMs = Date.parse(params.daemonStartedAt);
@@ -1079,6 +1107,7 @@ export function buildBridgeHealthReport(params: {
     ...(params.project ? [`project: ${params.project}`] : []),
     ...(params.mode ? [`mode: ${params.mode}`] : []),
     ...(params.model ? [`model: ${params.model}`] : []),
+    ...(params.contextPressure ? [formatCodexContextPressureLine(params.contextPressure)] : []),
     `context_token_cached: ${params.contextTokenCached ? "yes" : "no"}`,
     `sync_buf_present: ${params.syncBufPresent ? "yes" : "no"}`,
     `message_claims_dir: ${messageClaimsDir(params.stateDir)}`,
@@ -1095,6 +1124,18 @@ export function getOrdinaryWechatMessageDisposition(
   if (route.leaseState === "pending_desktop_pull") return { action: "block", reason: "pending_desktop_pull" };
   if (route.activeTurn) return { action: "queue", reason: "active_turn" };
   return { action: "allow" };
+}
+
+export function buildBlockedOrdinaryWechatReply(
+  reason: "desktop_active" | "pending_desktop_pull",
+  route?: { needsReconcile?: boolean },
+): string {
+  if (reason === "desktop_active") {
+    return route?.needsReconcile
+      ? "这条 Codex thread 现在在 Desktop active，且存在未 pull 的手机上下文。请先回电脑运行 pull WeChat back；要从手机继续发 /resume，要退出发 /detach。"
+      : "这条 Codex thread 现在在 Desktop active。要从手机继续发 /resume；要退出这次 handoff 发 /detach。";
+  }
+  return "这条 Codex thread 正在等待 Desktop pull。要从手机继续，发 /resume；要退出 carry-over，发 /detach。";
 }
 
 export function resolveWechatTurnThreadId(route: SenderProjectRoute | undefined, session: SenderProjectSession | undefined): string | undefined {
@@ -1193,6 +1234,9 @@ function textFromResponseMessagePayload(payload: any): string {
 }
 
 function extractWechatPromptUserMessage(text: string): string {
+  const resumedMarker = "\nNew WeChat message:\n";
+  const resumedIndex = text.lastIndexOf(resumedMarker);
+  if (resumedIndex !== -1) return text.slice(resumedIndex + resumedMarker.length).trim();
   const marker = "\nUser message:\n";
   const index = text.indexOf(marker);
   if (index === -1) return text.trim();
@@ -1327,8 +1371,8 @@ function readCodexSessionSummary(filePath: string): CodexSessionSummary | null {
     try {
       const entry = JSON.parse(line);
       if (entry.type === "session_meta" && entry.payload) {
-        threadId = String(entry.payload.id ?? threadId);
-        cwd = String(entry.payload.cwd ?? cwd);
+        if (!threadId) threadId = String(entry.payload.id ?? "");
+        if (!cwd) cwd = String(entry.payload.cwd ?? "");
       }
       const payload = entry.payload;
       if (payload?.type === "message") {
@@ -1388,6 +1432,205 @@ export function findCodexSessionCursorByThread(
     .filter((session) => session.threadId === threadId)
     .sort((a, b) => b.mtimeMs - a.mtimeMs || b.file.localeCompare(a.file));
   return sessions[0] ? cursorFromCodexSessionSummary(sessions[0]) : null;
+}
+
+type ParsedCodexTokenUsage = {
+  usedTokens: number;
+  contextWindow: number;
+  lastUsageTokens?: number;
+  totalUsageTokens?: number;
+};
+
+function numberFromUnknown(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+function tokenTotalFromUnknown(value: any): number | undefined {
+  if (!value || typeof value !== "object") return numberFromUnknown(value);
+  return (
+    numberFromUnknown(value.total_tokens) ??
+    numberFromUnknown(value.totalTokens) ??
+    numberFromUnknown(value.used_tokens) ??
+    numberFromUnknown(value.usedTokens)
+  );
+}
+
+function tokenInputOutputFromUnknown(value: any): number | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const input = numberFromUnknown(value.input_tokens ?? value.inputTokens) ?? 0;
+  const output = numberFromUnknown(value.output_tokens ?? value.outputTokens) ?? 0;
+  return input || output ? input + output : undefined;
+}
+
+function collectTokenUsageCandidates(value: any, out: any[] = [], depth = 0): any[] {
+  if (!value || typeof value !== "object" || depth > 5) return out;
+  const hasUsageShape =
+    "model_context_window" in value ||
+    "modelContextWindow" in value ||
+    "context_window" in value ||
+    "contextWindow" in value ||
+    "tokenUsage" in value ||
+    "token_usage" in value ||
+    "last_token_usage" in value ||
+    "lastTokenUsage" in value ||
+    "total_token_usage" in value ||
+    "totalTokenUsage" in value;
+  if (hasUsageShape) out.push(value);
+  for (const key of ["payload", "info", "params", "event", "data", "tokenUsage", "token_usage"]) {
+    collectTokenUsageCandidates(value[key], out, depth + 1);
+  }
+  return out;
+}
+
+function parseCodexTokenUsageFromEntry(entry: any): ParsedCodexTokenUsage | null {
+  const candidates = collectTokenUsageCandidates(entry);
+  for (const candidate of candidates) {
+    const tokenUsage = candidate.tokenUsage ?? candidate.token_usage ?? candidate;
+    const contextWindow =
+      numberFromUnknown(tokenUsage.modelContextWindow) ??
+      numberFromUnknown(tokenUsage.model_context_window) ??
+      numberFromUnknown(tokenUsage.contextWindow) ??
+      numberFromUnknown(tokenUsage.context_window);
+    if (!contextWindow || contextWindow <= 0) continue;
+
+    const lastUsage = tokenUsage.last ?? tokenUsage.last_token_usage ?? tokenUsage.lastTokenUsage;
+    const totalUsage = tokenUsage.total ?? tokenUsage.total_token_usage ?? tokenUsage.totalTokenUsage;
+    const lastUsageTokens = tokenTotalFromUnknown(lastUsage) ?? tokenInputOutputFromUnknown(lastUsage);
+    const totalUsageTokens = tokenTotalFromUnknown(totalUsage) ?? tokenInputOutputFromUnknown(totalUsage);
+    const directUsageTokens = tokenTotalFromUnknown(tokenUsage) ?? tokenInputOutputFromUnknown(tokenUsage);
+    const usedTokens = lastUsageTokens && lastUsageTokens > 0 ? lastUsageTokens : totalUsageTokens ?? directUsageTokens;
+    if (!usedTokens || usedTokens < 0) continue;
+
+    return {
+      usedTokens,
+      contextWindow,
+      lastUsageTokens,
+      totalUsageTokens,
+    };
+  }
+  return null;
+}
+
+function isEmptyTaskCompleteEntry(entry: any): boolean {
+  const payload = entry?.payload;
+  if (!payload || typeof payload !== "object") return false;
+  const type = String(payload.type ?? entry.type ?? "");
+  if (type !== "task_complete" && type !== "taskComplete") return false;
+  if ("last_agent_message" in payload) return payload.last_agent_message == null;
+  if ("lastAgentMessage" in payload) return payload.lastAgentMessage == null;
+  return false;
+}
+
+function classifyCodexContextPressure(params: {
+  threadId: string;
+  file: string;
+  usage?: ParsedCodexTokenUsage | null;
+  emptyTaskComplete?: boolean;
+}): CodexContextPressure {
+  if (!params.usage) {
+    return {
+      threadId: params.threadId,
+      status: "unknown",
+      reason: "no_token_usage",
+      file: params.file,
+    };
+  }
+
+  const percent = Math.min(100, Math.max(0, Math.round((params.usage.usedTokens / params.usage.contextWindow) * 100)));
+  const saturatedByEmptyReply = Boolean(params.emptyTaskComplete && percent >= CODEX_CONTEXT_HIGH_PERCENT);
+  const saturatedByZeroLastUsage =
+    params.usage.lastUsageTokens === 0 &&
+    typeof params.usage.totalUsageTokens === "number" &&
+    params.usage.totalUsageTokens >= params.usage.contextWindow * 0.98;
+  const status: CodexContextPressureStatus = saturatedByEmptyReply || saturatedByZeroLastUsage
+    ? "saturated"
+    : percent >= CODEX_CONTEXT_BLOCK_PERCENT
+      ? "critical"
+      : percent >= CODEX_CONTEXT_HIGH_PERCENT
+        ? "high"
+        : "ok";
+
+  return {
+    threadId: params.threadId,
+    status,
+    reason: status === "saturated" ? "context_limit_empty_reply" : "context_usage",
+    file: params.file,
+    usedTokens: Math.round(params.usage.usedTokens),
+    contextWindow: Math.round(params.usage.contextWindow),
+    percent,
+    lastUsageTokens: params.usage.lastUsageTokens,
+    totalUsageTokens: params.usage.totalUsageTokens,
+    emptyTaskComplete: params.emptyTaskComplete,
+  };
+}
+
+export function readCodexContextPressure(
+  threadId: string,
+  roots: string[] = [path.join(os.homedir(), ".codex", "sessions")],
+): CodexContextPressure {
+  const cursor = findCodexSessionCursorByThread(threadId, roots);
+  if (!cursor?.file || !existsSync(cursor.file)) {
+    return { threadId, status: "unknown", reason: "no_session_file" };
+  }
+
+  let latestUsage: ParsedCodexTokenUsage | null = null;
+  let latestUsageIndex = -1;
+  let emptyTaskCompleteIndex = -1;
+  const lines = readFileSync(cursor.file, "utf-8").split(/\r?\n/);
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index].trim();
+    if (!line) continue;
+    try {
+      const entry = JSON.parse(line);
+      const usage = parseCodexTokenUsageFromEntry(entry);
+      if (usage) {
+        latestUsage = usage;
+        latestUsageIndex = index;
+      }
+      if (isEmptyTaskCompleteEntry(entry)) emptyTaskCompleteIndex = index;
+    } catch {
+      // Ignore append-in-progress lines.
+    }
+  }
+
+  return classifyCodexContextPressure({
+    threadId,
+    file: cursor.file,
+    usage: latestUsage,
+    emptyTaskComplete: emptyTaskCompleteIndex >= latestUsageIndex && latestUsageIndex >= 0,
+  });
+}
+
+function formatTokenCount(tokens: number | undefined): string {
+  if (typeof tokens !== "number" || !Number.isFinite(tokens)) return "?";
+  if (tokens >= 1000) return `${Math.round(tokens / 1000)}k`;
+  return String(Math.round(tokens));
+}
+
+export function formatCodexContextPressureLine(pressure?: CodexContextPressure | null): string {
+  if (!pressure) return "context: unknown";
+  if (pressure.status === "unknown" || !pressure.usedTokens || !pressure.contextWindow || typeof pressure.percent !== "number") {
+    return `context: unknown (${pressure.reason})`;
+  }
+  return `context: ${pressure.status} (${pressure.percent}%, ${formatTokenCount(pressure.usedTokens)}/${formatTokenCount(pressure.contextWindow)})`;
+}
+
+export function shouldBlockNativeHandoffForContext(pressure?: CodexContextPressure | null): boolean {
+  return pressure?.status === "critical" || pressure?.status === "saturated";
+}
+
+export function buildNativeHandoffContextBlockedMessage(pressure: CodexContextPressure): string {
+  return [
+    "这个 Codex thread 上下文已经接近或命中 context limit，原生 fork 到微信可能失败。",
+    formatCodexContextPressureLine(pressure),
+    "请先在当前 Desktop/CLI thread 运行 /compact，然后再 carry to WeChat。",
+    "这里不会静默 fallback 到 summary/bounded handoff，避免你以为手机拿到了完整 native thread。",
+  ].join("\n");
 }
 
 export function readCurrentCodexThreadId(env: Record<string, string | undefined> = process.env): string {
@@ -1575,22 +1818,14 @@ export function buildFinishRunNotification(offer: FinishRunOffer): string {
     ...(summary ? [`完成：${summary}`] : []),
     ...(nextAction ? [`需要你：${nextAction}`] : []),
     "",
-    `project: ${offer.projectName}`,
-    `cwd: ${offer.cwd}`,
-    `thread: ${offer.threadId}`,
-    `mode: ${offer.mode}`,
-    `permission: ${describeModePermission(offer.mode)}`,
-    `model: ${offer.model ?? "default"}`,
-    "",
+    `project: ${offer.projectName} | mode: ${offer.mode} | model: ${offer.model ?? "default"}`,
     ...(offer.needsMobilePull
       ? [
-          "注意：存在未 pull 的手机 raw transcript。",
-          "先在电脑运行 pull WeChat back，再继续 Desktop；否则 Desktop context 不含手机期间内容。",
+          "有未 pull 手机上下文：电脑先运行 pull WeChat back。",
           "",
         ]
       : []),
-    "要从手机继续，回复 /continue。",
-    "不回复就不会接管手机；微信会保持之前的 project/session state。",
+    "回复 /continue 从手机继续；不回复保持原状态。",
   ].join("\n");
 }
 
@@ -1644,6 +1879,7 @@ export function continueFinishRunOfferToWeChat(
     mobileStartCursor?: CodexSessionCursor;
     roots?: string[];
     now?: string;
+    contextPressure?: CodexContextPressure | null;
   } = {},
 ): { handled: true; reply: string; projectName?: string; desktopThreadId?: string; mobileThreadId?: string } {
   const sender = senderState(state, senderId);
@@ -1706,6 +1942,7 @@ export function continueFinishRunOfferToWeChat(
     mode: offer.mode,
     sessionCursor: offer.sessionCursor,
     mobileStartCursor: params.mobileStartCursor,
+    contextPressure: params.contextPressure,
     now: params.now,
   });
   if (notifications) notifications.pendingOffer = null;
@@ -1735,6 +1972,7 @@ export function carryCurrentToWeChat(
     mode?: BridgeMode;
     sessionCursor?: CodexSessionCursor;
     mobileStartCursor?: CodexSessionCursor;
+    contextPressure?: CodexContextPressure | null;
   },
 ): { notification: string; route: SenderProjectRoute } {
   const project = projects.projects[params.projectName];
@@ -1776,24 +2014,13 @@ export function carryCurrentToWeChat(
   const notification = [
     "continue from here",
     "",
-    "已从电脑上的 Codex 会话 fork 出手机 continuation。",
-    `project: ${params.projectName}`,
-    `cwd: ${project.cwd}`,
-    `desktop thread: ${params.threadId}`,
-    `mobile thread: ${mobileThreadId}`,
-    "handoff: forked mobile session",
-    `mode: ${mode}`,
-    `permission: ${describeModePermission(mode)}`,
-    `model: ${model}`,
-    "",
-    "现在请在微信继续；电脑端先不要继续发消息。",
-    "如果电脑端继续发消息，微信 remote mode 会自动暂停。",
-    "回电脑后第一句话请说：pull WeChat back，然后再继续任务。",
-    "如果跳过 pull 直接在电脑继续，Desktop context 不含手机期间内容。",
-    "",
-    "直接回复就从这里继续。",
-    "CLI fallback：codex-wechat pull --project current。",
-    "也可以先在手机发 /back。",
+    "手机已接管这个 Codex thread。",
+    `project: ${params.projectName} | mode: ${mode} | model: ${model}`,
+    ...(params.contextPressure ? [formatCodexContextPressureLine(params.contextPressure)] : []),
+    ...(params.contextPressure?.status === "high" ? ["上下文偏高；回电脑后建议先 /compact 再继续长期任务。"] : []),
+    "直接回复继续。",
+    "回电脑先说：pull WeChat back。",
+    "电脑继续会暂停手机；/resume 继续手机，/detach 退出。",
   ].join("\n");
   return { notification, route };
 }
@@ -1956,9 +2183,16 @@ export function consumePendingDesktopTranscript(route: SenderProjectRoute | unde
   const pending = route?.pendingDesktopTranscript?.trim();
   if (!pending) return userMessage;
   route.pendingDesktopTranscript = null;
+  const transcript =
+    pending.length <= MAX_PENDING_DESKTOP_TRANSCRIPT_CHARS
+      ? pending
+      : [
+          `[raw desktop transcript truncated: omitted ${pending.length - MAX_PENDING_DESKTOP_TRANSCRIPT_CHARS} chars; showing latest ${MAX_PENDING_DESKTOP_TRANSCRIPT_CHARS} chars]`,
+          pending.slice(-MAX_PENDING_DESKTOP_TRANSCRIPT_CHARS),
+        ].join("\n");
   return [
     "Desktop handoff context since phone paused:",
-    pending,
+    transcript,
     "",
     "New WeChat message:",
     userMessage,
@@ -2379,6 +2613,7 @@ export function applyBridgeCommand(
   projects: ProjectRegistry,
   senderId: string,
   command: Exclude<BridgeCommand, { type: "message" }>,
+  options: { contextPressure?: CodexContextPressure | null } = {},
 ): { handled: true; reply: string } {
   const sender = senderState(state, senderId);
 
@@ -2480,6 +2715,7 @@ export function applyBridgeCommand(
         `model: ${model ?? "default"}`,
         `thread: ${route?.attachedThreadId ?? session?.threadId ?? "none"}`,
         `lease: ${route?.leaseState ?? "wechat_owned"}`,
+        ...(options.contextPressure ? [formatCodexContextPressureLine(options.contextPressure)] : []),
         `cwd: ${project.cwd}`,
       ].join("\n"),
     };
@@ -2496,6 +2732,7 @@ export function applyBridgeCommand(
         `lease: ${route?.leaseState ?? "wechat_owned"}`,
         `thread: ${route?.attachedThreadId ?? session?.threadId ?? "none"}`,
         `parked_thread: ${route?.parkedThreadId ?? "none"}`,
+        ...(options.contextPressure ? [formatCodexContextPressureLine(options.contextPressure)] : []),
         `cwd: ${project.cwd}`,
       ].join("\n"),
     };
@@ -4088,14 +4325,43 @@ function doctorAccountStatus(stateDir: string): string {
   }
 }
 
-function doctorDaemonStatus(): string {
+function launchAgentStateDirFromPlist(plistText: string): string | null {
+  const args = Array.from(plistText.matchAll(/<string>([\s\S]*?)<\/string>/g), (match) => xmlUnescape(match[1] ?? ""));
+  const stateDirFlag = args.indexOf("--state-dir");
+  return stateDirFlag >= 0 ? args[stateDirFlag + 1] ?? null : null;
+}
+
+export function describeLaunchAgentDaemonStatus(params: {
+  requestedStateDir: string;
+  launchctlExitCode: number;
+  launchctlStdout: string;
+  plistText?: string;
+  platform?: NodeJS.Platform;
+}): string {
+  if ((params.platform ?? process.platform) !== "darwin") return "unsupported on this platform";
+  if (params.launchctlExitCode !== 0) return "not installed";
+  const state = params.launchctlStdout.match(/\bstate = ([^\n]+)/)?.[1]?.trim() ?? "unknown";
+  const pid = params.launchctlStdout.match(/\bpid = ([^\n]+)/)?.[1]?.trim();
+  const status = pid ? `${state} (pid ${pid})` : state;
+  const configuredStateDir = params.plistText ? launchAgentStateDirFromPlist(params.plistText) : null;
+  if (!configuredStateDir) return `${status} (state-dir unknown; requested: ${params.requestedStateDir})`;
+  if (path.resolve(configuredStateDir) !== path.resolve(params.requestedStateDir)) {
+    return `${status} (different state-dir: ${configuredStateDir}; requested: ${params.requestedStateDir})`;
+  }
+  return `${status} (state-dir: ${configuredStateDir})`;
+}
+
+function doctorDaemonStatusForState(stateDir: string): string {
   if (process.platform !== "darwin") return "unsupported on this platform";
   const result = launchctlPrint(DAEMON_LABEL);
-  if (result.exitCode !== 0) return "not installed";
-  const output = result.stdout;
-  const state = output.match(/\bstate = ([^\n]+)/)?.[1]?.trim() ?? "unknown";
-  const pid = output.match(/\bpid = ([^\n]+)/)?.[1]?.trim();
-  return pid ? `${state} (pid ${pid})` : state;
+  const plistPath = launchAgentPlistPath();
+  const plistText = existsSync(plistPath) ? readFileSync(plistPath, "utf-8") : undefined;
+  return describeLaunchAgentDaemonStatus({
+    requestedStateDir: stateDir,
+    launchctlExitCode: result.exitCode,
+    launchctlStdout: result.stdout,
+    plistText,
+  });
 }
 
 function launchAgentDomain(): string {
@@ -4244,7 +4510,7 @@ async function commandDoctor(options: RuntimeOptions): Promise<void> {
     `codex: ${commandVersion(options.codexBin)}`,
     `account: ${doctorAccountStatus(options.stateDir)}`,
     `projects: ${doctorProjectsStatus(options)}`,
-    `daemon: ${doctorDaemonStatus()}`,
+    `daemon: ${doctorDaemonStatusForState(options.stateDir)}`,
     `renderer_chrome: ${chrome ? `ok (${chrome})` : "missing"}`,
     `renderer_quicklook: ${qlmanage ? `ok (${qlmanage})` : "missing"}`,
     `renderer_sips: ${sips ? `ok (${sips})` : "missing"}`,
@@ -4284,6 +4550,8 @@ async function commandCarryStatus(options: RuntimeOptions, args: Args): Promise<
   for (const [senderId, sender] of Object.entries(state.senders)) {
     const route = sender.routes?.[projectName];
     const session = sender.sessions?.[projectName];
+    const contextThreadId = resolveWechatTurnThreadId(route, session) ?? route?.attachedThreadId ?? session?.threadId;
+    const contextPressure = contextThreadId ? readCodexContextPressure(contextThreadId) : null;
     lines.push(
       [
         `sender: ${senderId}`,
@@ -4291,6 +4559,7 @@ async function commandCarryStatus(options: RuntimeOptions, args: Args): Promise<
         `lease: ${route?.leaseState ?? "wechat_owned"}`,
         `surface: ${route?.activeSurface ?? "wechat"}`,
         `parked: ${route?.parkedThreadId ?? "none"}`,
+        ...(contextPressure ? [formatCodexContextPressureLine(contextPressure)] : []),
       ].join("\n"),
     );
   }
@@ -4316,6 +4585,14 @@ async function commandCarryCurrent(options: RuntimeOptions, args: Args): Promise
   const project = projects.projects[projectName];
   const mode = normalizeMode(typeof args.mode === "string" ? args.mode : "") ?? activeMode(state, projects, senderId);
   const model = activeModel(state, projects, senderId, projectName) ?? options.codexModel;
+  const contextPressure = readCodexContextPressure(threadId);
+  if (shouldBlockNativeHandoffForContext(contextPressure)) {
+    appendBridgeEvent(options.stateDir, {
+      type: "context_pressure_blocked",
+      data: { senderId, projectName, threadId, status: contextPressure.status, percent: contextPressure.percent },
+    });
+    throw new Error(buildNativeHandoffContextBlockedMessage(contextPressure));
+  }
   const appServer = new CodexAppServerClient(options);
   let fork: AppServerForkResult;
   try {
@@ -4337,6 +4614,7 @@ async function commandCarryCurrent(options: RuntimeOptions, args: Args): Promise
     mode,
     sessionCursor: findCodexSessionCursorByThread(threadId) ?? undefined,
     mobileStartCursor: fork.cursor ?? findCodexSessionCursorByThread(fork.threadId) ?? undefined,
+    contextPressure,
   });
   saveBridgeState(options.stateDir, state);
   appendBridgeEvent(options.stateDir, { type: "carry_attached", data: { senderId, projectName, threadId, mobileThreadId: fork.threadId } });
@@ -4379,13 +4657,20 @@ async function commandPullCurrent(options: RuntimeOptions, args: Args): Promise<
   });
   const threadId = typeof args["thread-id"] === "string" ? args["thread-id"] : readCurrentCodexThreadId();
   const eventsBeforePull = readBridgeEvents(options.stateDir);
-  appendBridgeEvent(options.stateDir, { type: "desktop_pull_started", data: { projectName, threadId } });
-  const result = pullCurrentToDesktop(state, {
+  const workingState: BridgeState = options.dryRun ? JSON.parse(JSON.stringify(state)) : state;
+  if (!options.dryRun) appendBridgeEvent(options.stateDir, { type: "desktop_pull_started", data: { projectName, threadId } });
+  const result = pullCurrentToDesktop(workingState, {
     threadId,
     projectName,
     events: eventsBeforePull,
     projects,
   });
+  if (options.dryRun) {
+    console.log("dry-run: would pull current route back to Desktop");
+    console.log(result.delta);
+    return;
+  }
+
   saveBridgeState(options.stateDir, state);
   appendBridgeEvent(options.stateDir, { type: "desktop_pull_completed", data: { senderId: result.senderId, projectName, threadId } });
   appendBridgeEvent(options.stateDir, { type: "lease_changed", data: { senderId: result.senderId, projectName, threadId, leaseState: "desktop_active" } });
@@ -4897,7 +5182,10 @@ async function commandStart(options: RuntimeOptions): Promise<void> {
             replyContext = parsed.type === "health" ? "health_reply" : "command_reply";
             if (parsed.type === "health") {
               const projectName = activeProjectName(bridgeState, projects, senderId);
+              const route = routeForProject(bridgeState, senderId, projectName);
               const session = senderState(bridgeState, senderId).sessions[projectName];
+              const contextThreadId = resolveWechatTurnThreadId(route, session) ?? route?.attachedThreadId ?? session?.threadId;
+              const contextPressure = contextThreadId ? readCodexContextPressure(contextThreadId) : null;
               reply = buildBridgeHealthReport({
                 daemonStartedAt,
                 stateDir: options.stateDir,
@@ -4907,6 +5195,7 @@ async function commandStart(options: RuntimeOptions): Promise<void> {
                 project: projectName,
                 mode: activeMode(bridgeState, projects, senderId),
                 model: activeModel(bridgeState, projects, senderId, projectName) ?? options.codexModel,
+                contextPressure,
                 contextTokenCached: Boolean(resolveCachedContextToken(options.stateDir, senderId)),
                 syncBufPresent: existsSync(syncBufFile(options.stateDir)),
                 lockOwner: readBridgeLock(options.stateDir),
@@ -4917,41 +5206,75 @@ async function commandStart(options: RuntimeOptions): Promise<void> {
             } else if (parsed.type === "continue") {
               const pendingOffer = latestPendingFinishOffer(senderState(bridgeState, senderId))?.offer;
               let fork: AppServerForkResult | null = null;
+              let continueContextPressure: CodexContextPressure | null = null;
+              let blockedByContextPressure = false;
               if (pendingOffer) {
                 const pendingRoute = senderState(bridgeState, senderId).routes?.[pendingOffer.projectName];
                 const canUseExistingRoute = pendingRoute?.attachedThreadId === pendingOffer.threadId;
                 if (!canUseExistingRoute && appServer) {
-                  fork = await appServer.forkThread({
-                    threadId: pendingOffer.threadId,
-                    cwd: pendingOffer.cwd,
-                    mode: pendingOffer.mode,
-                    model: pendingOffer.model,
-                    projectName: pendingOffer.projectName,
+                  continueContextPressure = readCodexContextPressure(pendingOffer.threadId);
+                  if (shouldBlockNativeHandoffForContext(continueContextPressure)) {
+                    appendBridgeEvent(options.stateDir, {
+                      type: "context_pressure_blocked",
+                      data: {
+                        senderId,
+                        projectName: pendingOffer.projectName,
+                        threadId: pendingOffer.threadId,
+                        status: continueContextPressure.status,
+                        percent: continueContextPressure.percent,
+                      },
+                    });
+                    reply = buildNativeHandoffContextBlockedMessage(continueContextPressure);
+                    replyProjectName = pendingOffer.projectName;
+                    replyThreadId = pendingOffer.threadId;
+                    saveBridgeState(options.stateDir, bridgeState);
+                    blockedByContextPressure = true;
+                  } else {
+                    fork = await appServer.forkThread({
+                      threadId: pendingOffer.threadId,
+                      cwd: pendingOffer.cwd,
+                      mode: pendingOffer.mode,
+                      model: pendingOffer.model,
+                      projectName: pendingOffer.projectName,
+                    });
+                  }
+                }
+              }
+              if (!blockedByContextPressure) {
+                const commandResult = continueFinishRunOfferToWeChat(bridgeState, projects, senderId, {
+                  threadId: pendingOffer?.threadId,
+                  mobileThreadId: fork?.threadId,
+                  mobileStartCursor: fork?.cursor,
+                  contextPressure: continueContextPressure,
+                });
+                saveBridgeState(options.stateDir, bridgeState);
+                reply = commandResult.reply;
+                replyProjectName = commandResult.projectName ?? eventProjectName;
+                replyThreadId = commandResult.mobileThreadId ?? commandResult.desktopThreadId ?? eventThreadId;
+                if (commandResult.projectName || commandResult.desktopThreadId || commandResult.mobileThreadId) {
+                  appendBridgeEvent(options.stateDir, {
+                    type: "finish_continue_requested",
+                    data: {
+                      senderId,
+                      projectName: commandResult.projectName,
+                      threadId: commandResult.desktopThreadId,
+                      mobileThreadId: commandResult.mobileThreadId,
+                    },
                   });
                 }
               }
-              const commandResult = continueFinishRunOfferToWeChat(bridgeState, projects, senderId, {
-                threadId: pendingOffer?.threadId,
-                mobileThreadId: fork?.threadId,
-                mobileStartCursor: fork?.cursor,
-              });
-              saveBridgeState(options.stateDir, bridgeState);
-              reply = commandResult.reply;
-              replyProjectName = commandResult.projectName ?? eventProjectName;
-              replyThreadId = commandResult.mobileThreadId ?? commandResult.desktopThreadId ?? eventThreadId;
-              if (commandResult.projectName || commandResult.desktopThreadId || commandResult.mobileThreadId) {
-                appendBridgeEvent(options.stateDir, {
-                  type: "finish_continue_requested",
-                  data: {
-                    senderId,
-                    projectName: commandResult.projectName,
-                    threadId: commandResult.desktopThreadId,
-                    mobileThreadId: commandResult.mobileThreadId,
-                  },
-                });
-              }
             } else {
-              const commandResult = applyBridgeCommand(bridgeState, projects, senderId, parsed);
+              const commandProjectName = activeProjectName(bridgeState, projects, senderId);
+              const commandRoute = routeForProject(bridgeState, senderId, commandProjectName);
+              const commandSession = senderState(bridgeState, senderId).sessions[commandProjectName];
+              const commandContextThreadId = resolveWechatTurnThreadId(commandRoute, commandSession) ?? commandRoute?.attachedThreadId ?? commandSession?.threadId;
+              const commandContextPressure =
+                parsed.type === "status" || parsed.type === "current"
+                  ? commandContextThreadId
+                    ? readCodexContextPressure(commandContextThreadId)
+                    : null
+                  : null;
+              const commandResult = applyBridgeCommand(bridgeState, projects, senderId, parsed, { contextPressure: commandContextPressure });
               saveBridgeState(options.stateDir, bridgeState);
               reply = commandResult.reply;
             }
@@ -4965,12 +5288,7 @@ async function commandStart(options: RuntimeOptions): Promise<void> {
             replyProjectName = projectName;
             const disposition = getOrdinaryWechatMessageDisposition(route ?? { leaseState: "wechat_active" });
             if (disposition.action === "block") {
-              reply =
-                disposition.reason === "desktop_active"
-                  ? route?.needsReconcile
-                    ? "这条 Codex thread 现在在 Desktop active，且存在未 pull 的手机上下文。请先回电脑运行 pull WeChat back 做 reconcile；要强行从手机继续，发 /resume。"
-                    : "这条 Codex thread 现在在 Desktop active。要从手机继续，发 /resume。"
-                  : "这条 Codex thread 正在等待 Desktop pull。要从手机继续，发 /resume；要退出 carry-over，发 /detach。";
+              reply = buildBlockedOrdinaryWechatReply(disposition.reason, route);
               replyContext = "command_reply";
             } else if (disposition.action === "queue") {
               const position = enqueueDeferredRouteMessage(route!, {
