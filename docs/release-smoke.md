@@ -7,7 +7,7 @@ Current public release smoke notes live here. Older smoke runs are archived unde
 Public main at smoke time:
 
 ```text
-9bb8fc9 Add context guard and public docs
+2c7e744 Prepare public release readiness
 ```
 
 Command:
@@ -18,6 +18,7 @@ mkdir -p "$tmp/home"
 HOME="$tmp/home" CODEX_WECHAT_HANDOFF_DIR="$tmp/app" \
   bash -lc 'curl -fsSL https://raw.githubusercontent.com/FUY25/codex-wechat-handoff/main/install.sh | bash -s -- --install-only'
 "$tmp/home/.local/bin/codex-wechat" --help
+git -C "$tmp/app" rev-parse --short HEAD
 ```
 
 Result:
@@ -32,6 +33,7 @@ Install-only mode complete.
 Next: codex-wechat init
 Then: codex-wechat setup
 Then: codex-wechat doctor
+2c7e744
 ```
 
 Default init and doctor smoke:
